@@ -1,0 +1,34 @@
+# Application Requirements
+Let me describe what I want to achieve, i want to create a web app, python FastApi as backend,
+vuejs as front end, in future i'll use my backend api with android app.
+
+# This is an app where multipile people can register as tour operator, offering their serving area, location, and other detils.
+Other people should be able to search for a location when they are looking for a vacation. They result will pull out a list of tour operator serving in that location.
+
+operator type user:
+    - They can come and register themselves
+    - add locations they are serving
+    - they can basically create a profile for there tour business, multiple offerings in the site, post photos, save actual locations of the place.
+    - it is possible in one place lets say i want to visit sikim state for 4 days, the operator will add the bigger serving area where multiple small location can be included,
+     which a tourist type user can add in their cart for that trip, they ma exclude also from the list of offering.
+     operator will be able to see this cart of choice and can calculate the costing and offer based on the selected items.
+
+    - operator can see all the coming request and serve, if required they can directly chat with the user also 
+    - other tourist type user can book the tour plan based on the offering
+    - after booking tourist type user can give detailed rating based on their experience.
+    - this rating will come in search result when a location will be searched, against the tour operator
+
+tourist type user:
+    - is a general type of user, common user, can come and make a tour plan after serching a location.
+    - they can see what are the popular area people are visiting in that particular place, which they can add in their cart
+    - they can create their cart directly also based on the location and popular area in that location without selecting an operator, 
+    - they can view  the selected location in a map, with the location pinned along with distance 
+
+## Write your project requirements below:
+## - Feature descriptions
+## - Technical specifications
+    - I want to use no sql database, with orm, for local testing create a local database
+    - in this repo create the backend and front end in to directories, structure the code repo properly, so that it is maintainable
+## - Dependencies and tools needed
+## - Any other relevant details
+

@@ -1,0 +1,5 @@
+python -m backend.scripts.seed_demo
+Log in with any seeded operator (password: Password123!):
+nina@wanderco.com
+carlos@coastliners.com
+miho@urbanloop.jp
