@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -49,8 +49,8 @@ async def create_quote_request(
     payload["tourist_name"] = current_user.get("full_name")
     payload["status"] = "open"
     payload["responses"] = []
-    payload["created_at"] = datetime.utcnow()
-    payload["updated_at"] = datetime.utcnow()
+    payload["created_at"] = datetime.now(timezone.utc)
+    payload["updated_at"] = datetime.now(timezone.utc)
 
     result = await db.quote_requests.insert_one(payload)
     payload["_id"] = str(result.inserted_id)
@@ -121,14 +121,14 @@ async def respond_to_quote(
         "operator_name": operator_profile.get("business_name"),
         "amount": response.amount,
         "message": response.message,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now(timezone.utc)
     }
 
     await db.quote_requests.update_one(
         {"_id": ObjectId(quote_id)},
         {
             "$push": {"responses": response_entry},
-            "$set": {"status": "responded", "updated_at": datetime.utcnow()}
+            "$set": {"status": "responded", "updated_at": datetime.now(timezone.utc)}
         }
     )
 
@@ -155,7 +155,123 @@ async def close_quote_request(quote_id: str, current_user: dict = Depends(get_cu
 
     await db.quote_requests.update_one(
         {"_id": ObjectId(quote_id)},
-        {"$set": {"status": "closed", "updated_at": datetime.utcnow()}}
+        {"$set": {"status": "closed", "updated_at": datetime.now(timezone.utc)}}
     )
 
     return {"message": "Quote closed"}
+
+@router.get("/search/locations")
+async def search_operator_locations(query: str):
+    """
+    Search for locations offered by operators.
+    Returns a list of locations with operator information.
+    """
+    if not query or len(query.strip()) < 2:
+        return {"global": [], "from_operators": []}
+    
+    db = await get_database()
+    
+    # Search in operator serving areas
+    operator_locations = []
+    
+    # Use regex for case-insensitive search
+    search_regex = {"$regex": query, "$options": "i"}
+    
+    # Find operators with matching serving areas
+    operators = await db.operator_profiles.find({
+        "serving_areas": {
+            "$elemMatch": {
+                "$or": [
+                    {"area_name": search_regex},
+                    {"state": search_regex},
+                    {"country": search_regex},
+                    {"sub_locations": search_regex}
+                ]
+            }
+        }
+    }).to_list(20)
+    
+    # Extract matching locations from operators
+    seen_locations = set()
+    for operator in operators:
+        operator_name = operator.get("full_name", "Unknown Operator")
+        operator_id = str(operator["_id"])
+        
+        for area in operator.get("serving_areas", []):
+            # Check if this area matches the query
+            area_name = area.get("area_name", "")
+            state = area.get("state", "")
+            country = area.get("country", "")
+            
+            if (query.lower() in area_name.lower() or 
+                query.lower() in state.lower() or 
+                query.lower() in country.lower()):
+                
+                location_key = f"{area_name}|{state}|{country}"
+                if location_key not in seen_locations:
+                    seen_locations.add(location_key)
+                    
+                    coordinates = area.get("coordinates", {})
+                    operator_locations.append({
+                        "id": f"operator_{operator_id}_{area_name}",
+                        "name": area_name,
+                        "state": state,
+                        "country": country,
+                        "lat": coordinates.get("latitude"),
+                        "lng": coordinates.get("longitude"),
+                        "type": "operator_location",
+                        "operator_name": operator_name,
+                        "operator_id": operator_id,
+                        "sub_locations": area.get("sub_locations", [])
+                    })
+    
+    return {
+        "from_operators": operator_locations
+    }
+
+@router.get("/destinations")
+async def get_all_quote_destinations():
+    """
+    Get all unique destinations from quote requests.
+    Returns list of destinations and detailed destination info with state/country.
+    """
+    db = await get_database()
+    
+    destinations = []
+    destinations_set = set()
+    destinations_detailed = []
+    detailed_set = set()
+    
+    # Fetch all quote requests
+    cursor = db.quote_requests.find({"status": {"$ne": "closed"}})
+    async for quote in cursor:
+        for location in quote.get("locations", []):
+            location_name = location.get("name", "").strip()
+            state = location.get("state", "").strip()
+            country = location.get("country", "").strip()
+            
+            # Add unique location name
+            if location_name and location_name not in destinations_set:
+                destinations_set.add(location_name)
+                destinations.append(location_name)
+            
+            # Add detailed location info
+            if location_name:
+                detail_key = f"{location_name}|{state}|{country}"
+                if detail_key not in detailed_set:
+                    detailed_set.add(detail_key)
+                    destinations_detailed.append({
+                        "name": location_name,
+                        "state": state,
+                        "country": country
+                    })
+    
+    # Sort for better UX
+    destinations.sort()
+    destinations_detailed.sort(key=lambda x: x["name"])
+    
+    return {
+        "destinations": destinations,
+        "destinations_with_details": destinations_detailed,
+        "count": len(destinations)
+    }

@@ -67,3 +67,20 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     email: Optional[str] = None
+
+class ForgotPasswordRequest(BaseModel):
+    """Request to initiate forgot password flow"""
+    email: EmailStr
+
+
+class VerifyOTPRequest(BaseModel):
+    """Verify OTP for password reset"""
+    email: EmailStr
+    otp: str
+
+
+class ResetPasswordRequest(BaseModel):
+    """Reset password with OTP"""
+    email: EmailStr
+    otp: str
+    new_password: str = Field(..., min_length=8, description="Must be at least 8 characters")

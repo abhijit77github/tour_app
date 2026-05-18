@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
 from typing import List, Dict
 from bson import ObjectId
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from ..models.chat import ChatMessage, ChatMessageCreate, ChatConversation
 from ..database import get_database
 from ..routers.auth import get_current_user
@@ -57,7 +57,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             # Save message to database
             db = await get_database()
             
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             message_doc = {
                 "sender_id": user_id,
                 "receiver_id": message_data["receiver_id"],
@@ -127,7 +127,7 @@ async def send_message(
         )
     
     # Create message
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     message_doc = {
         "sender_id": str(current_user["_id"]),
         "receiver_id": message.receiver_id,

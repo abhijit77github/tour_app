@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 from .user import PyObjectId
 
@@ -10,7 +10,7 @@ class ChatMessage(BaseModel):
     sender_id: str
     receiver_id: str
     message: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     read: bool = False
     
     class Config:

@@ -229,9 +229,28 @@ const scrollToBottom = () => {
 
 const formatTime = (timestamp) => {
   if (!timestamp) return '';
-  const date = new Date(timestamp);
+  
+  // Parse the timestamp - it comes as ISO string from backend
+  let date;
+  if (typeof timestamp === 'string') {
+    // Handle ISO format timestamps (e.g., "2024-02-05T10:30:45.123456")
+    date = new Date(timestamp);
+  } else if (timestamp instanceof Date) {
+    date = timestamp;
+  } else if (typeof timestamp === 'number') {
+    date = new Date(timestamp);
+  } else {
+    return '';
+  }
+  
+  // Check if date is valid
+  if (isNaN(date.getTime())) {
+    console.warn('Invalid timestamp:', timestamp);
+    return '';
+  }
+  
   const now = new Date();
-  const diff = now - date;
+  const diff = now.getTime() - date.getTime();
   
   // Less than a minute
   if (diff < 60000) return 'Just now';
@@ -248,7 +267,19 @@ const formatTime = (timestamp) => {
     return `${hours}h ago`;
   }
   
-  // More than a day
+  // More than a day, show date
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  
+  if (date.toDateString() === yesterday.toDateString()) {
+    return 'Yesterday';
+  }
+  
+  if (date.getFullYear() === today.getFullYear()) {
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+  
   return date.toLocaleDateString();
 };
 </script>

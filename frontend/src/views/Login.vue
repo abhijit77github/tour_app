@@ -26,6 +26,10 @@
             />
           </div>
 
+          <div class="forgot-password-link">
+            <router-link to="/forgot-password">Forgot Password?</router-link>
+          </div>
+
           <div v-if="error" class="error">{{ error }}</div>
 
           <button type="submit" class="btn btn-primary btn-block" :disabled="loading">
@@ -70,7 +74,7 @@ export default {
         
         // Redirect based on user type
         if (authStore.isOperator) {
-          router.push('/operator/dashboard')
+          router.push('/operator/home')
         } else {
           router.push('/tourist/home')
         }
@@ -126,6 +130,21 @@ export default {
 }
 
 .register-link a:hover {
+  text-decoration: underline;
+}
+
+.forgot-password-link {
+  text-align: right;
+  margin-bottom: 1rem;
+}
+
+.forgot-password-link a {
+  color: #3498db;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.forgot-password-link a:hover {
   text-decoration: underline;
 }
 </style>

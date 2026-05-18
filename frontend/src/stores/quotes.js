@@ -72,31 +72,51 @@ export const useQuoteStore = defineStore('quote', {
     },
 
     async searchPlaces(query) {
-      if (!query || !query.trim()) return []
+      if (!query || !query.trim()) return { global: [], from_operators: [] }
       this.searching = true
       this.error = null
       try {
-        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=6&q=${encodeURIComponent(query)}`
-        const res = await fetch(url, {
-          headers: {
-            Accept: 'application/json'
-          }
-        })
-        if (!res.ok) {
-          throw new Error('Search failed')
+        // Fetch operator locations from backend
+        let operatorResults = []
+        try {
+          const operatorRes = await api.get(`/quotes/search/locations?query=${encodeURIComponent(query)}`)
+          operatorResults = operatorRes.data.from_operators || []
+        } catch (err) {
+          console.warn('Failed to fetch operator locations:', err)
         }
-        const data = await res.json()
-        return data.map((item) => ({
-          id: item.place_id,
-          name: item.display_name,
-          lat: parseFloat(item.lat),
-          lng: parseFloat(item.lon),
-          state: item.address?.state || '',
-          country: item.address?.country || ''
-        }))
+
+        // Fetch global locations from Nominatim
+        let globalResults = []
+        try {
+          const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(query)}`
+          const res = await fetch(url, {
+            headers: {
+              Accept: 'application/json'
+            }
+          })
+          if (res.ok) {
+            const data = await res.json()
+            globalResults = data.map((item) => ({
+              id: item.place_id,
+              name: item.display_name,
+              lat: parseFloat(item.lat),
+              lng: parseFloat(item.lon),
+              state: item.address?.state || '',
+              country: item.address?.country || '',
+              type: 'global_location'
+            }))
+          }
+        } catch (err) {
+          console.warn('Global location search failed:', err)
+        }
+
+        return {
+          global: globalResults,
+          from_operators: operatorResults
+        }
       } catch (err) {
         this.error = 'Location search failed. Try again.'
-        return []
+        return { global: [], from_operators: [] }
       } finally {
         this.searching = false
       }

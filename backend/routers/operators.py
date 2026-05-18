@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Optional
+from datetime import datetime, timezone
 from bson import ObjectId
 from ..models.operator import (
     OperatorProfile, 
@@ -67,9 +68,8 @@ async def create_operator_profile(
     profile_dict["average_rating"] = 0.0
     profile_dict["total_reviews"] = 0
     
-    from datetime import datetime
-    profile_dict["created_at"] = datetime.utcnow()
-    profile_dict["updated_at"] = datetime.utcnow()
+    profile_dict["created_at"] = datetime.now(timezone.utc)
+    profile_dict["updated_at"] = datetime.now(timezone.utc)
     
     result = await db.operator_profiles.insert_one(profile_dict)
     
@@ -121,8 +121,7 @@ async def update_my_profile(
             detail="No data to update"
         )
     
-    from datetime import datetime
-    update_data["updated_at"] = datetime.utcnow()
+    update_data["updated_at"] = datetime.now(timezone.utc)
     
     # Try to update existing profile
     result = await db.operator_profiles.update_one(
@@ -144,8 +143,8 @@ async def update_my_profile(
             "serving_areas": [],
             "average_rating": 0.0,
             "total_reviews": 0,
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow()
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc)
         }
         
         result = await db.operator_profiles.insert_one(new_profile)
@@ -178,12 +177,11 @@ async def add_serving_area(
 
     db = await get_database()
     
-    from datetime import datetime
     result = await db.operator_profiles.update_one(
         {"user_id": str(current_user["_id"])},
         {
             "$push": {"serving_areas": serving_area.model_dump()},
-            "$set": {"updated_at": datetime.utcnow()}
+            "$set": {"updated_at": datetime.now(timezone.utc)}
         }
     )
     
@@ -225,15 +223,13 @@ async def update_serving_area(
     if area_index < 0 or area_index >= len(profile.get("serving_areas", [])):
         raise HTTPException(status_code=404, detail="Serving area not found")
     
-    from datetime import datetime
-    
     # Update the specific serving area at the given index
     result = await db.operator_profiles.update_one(
         {"user_id": str(current_user["_id"])},
         {
             "$set": {
                 f"serving_areas.{area_index}": serving_area.model_dump(),
-                "updated_at": datetime.utcnow()
+                "updated_at": datetime.now(timezone.utc)
             }
         }
     )
@@ -278,7 +274,7 @@ async def delete_serving_area(
         {
             "$set": {
                 "serving_areas": serving_areas,
-                "updated_at": datetime.utcnow()
+                "updated_at": datetime.now(timezone.utc)
             }
         }
     )
@@ -304,6 +300,61 @@ async def get_operator_profile(operator_id: str):
     
     profile["_id"] = str(profile["_id"])
     return profile
+
+
+@router.get("/serving-areas")
+async def get_all_serving_areas():
+    """Get all unique serving areas from all operators"""
+    db = await get_database()
+    
+    areas = []
+    states = set()
+    countries = set()
+    detailed_areas = []
+    detailed_set = set()
+    
+    # Fetch all operator profiles and their serving areas
+    cursor = db.operator_profiles.find({})
+    async for operator in cursor:
+        for area in operator.get("serving_areas", []):
+            area_name = area.get("area_name", "").strip()
+            state = area.get("state", "").strip()
+            country = area.get("country", "").strip()
+            
+            # Add unique area name
+            if area_name and area_name not in areas:
+                areas.append(area_name)
+            
+            # Track states and countries
+            if state:
+                states.add(state)
+            if country:
+                countries.add(country)
+            
+            # Add detailed area info
+            if area_name:
+                detail_key = f"{area_name}|{state}|{country}"
+                if detail_key not in detailed_set:
+                    detailed_set.add(detail_key)
+                    detailed_areas.append({
+                        "name": area_name,
+                        "state": state,
+                        "country": country
+                    })
+    
+    # Sort for better UX
+    areas.sort()
+    detailed_areas.sort(key=lambda x: x["name"])
+    states_list = sorted(list(states))
+    countries_list = sorted(list(countries))
+    
+    return {
+        "areas": areas,
+        "areas_with_details": detailed_areas,
+        "states": states_list,
+        "countries": countries_list,
+        "count": len(areas)
+    }
 
 
 @router.get("/search/location")

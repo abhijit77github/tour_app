@@ -10,7 +10,7 @@
 </template>
 
 <script>
-import { computed, onMounted } from 'vue'
+import { computed } from 'vue'
 import { useAuthStore } from './stores/auth'
 import Header from './components/Header.vue'
 import Footer from './components/Footer.vue'
@@ -27,10 +27,6 @@ export default {
     const authStore = useAuthStore()
     
     const isAuthenticated = computed(() => authStore.isAuthenticated && authStore.user)
-    
-    onMounted(async () => {
-      await authStore.initAuth()
-    })
 
     return {
       isAuthenticated

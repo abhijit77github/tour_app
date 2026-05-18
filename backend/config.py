@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     # CORS
     frontend_url: str = "http://localhost:5173"
     
+    # Email Settings (SMTP)
+    smtp_server: Optional[str] = None
+    smtp_port: int = 587
+    smtp_email: Optional[str] = None
+    smtp_password: Optional[str] = None
+    
     class Config:
         env_file = ".env"
         case_sensitive = False

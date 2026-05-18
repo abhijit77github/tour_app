@@ -7,7 +7,7 @@
         </div>
         <div class="nav-links">
           <router-link v-if="!isAuthenticated" to="/">Home</router-link>
-          <router-link to="/search">Search Tours</router-link>
+          <router-link v-if="!isOperator" to="/search">Search Tours</router-link>
           <router-link v-if="isTourist" to="/quote-builder">Get a Quote</router-link>
           
           <template v-if="!isAuthenticated">
@@ -16,6 +16,7 @@
           </template>
           
           <template v-else>
+            <router-link v-if="isOperator" to="/operator/home">Home</router-link>
             <router-link v-if="isOperator" to="/operator/dashboard">Dashboard</router-link>
             <router-link v-if="isTourist && !isOnTouristHome" to="/tourist/home">Home</router-link>
             <router-link v-if="isTourist" to="/my-bookings">My Bookings</router-link>

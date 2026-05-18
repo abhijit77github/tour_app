@@ -6,7 +6,8 @@ export const useAuthStore = defineStore('auth', {
     user: null,
     token: localStorage.getItem('token') || null,
     loading: false,
-    error: null
+    error: null,
+    initialized: false
   }),
 
   getters: {
@@ -77,6 +78,7 @@ export const useAuthStore = defineStore('auth', {
           this.logout()
         }
       }
+      this.initialized = true
     }
   }
 })
