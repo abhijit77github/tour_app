@@ -15,30 +15,6 @@ from ..routers.auth import get_current_user
 router = APIRouter(prefix="/operators", tags=["Operators"])
 
 
-@router.get("/{operator_id}")
-async def get_operator_profile(operator_id: str):
-    """Get operator profile by ID (public)"""
-    db = await get_database()
-    
-    try:
-        profile = await db.operator_profiles.find_one({"_id": ObjectId(operator_id)})
-    except:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid operator ID"
-        )
-    
-    if not profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Operator profile not found"
-        )
-    
-    # Convert ObjectId to string
-    profile["_id"] = str(profile["_id"])
-    return profile
-
-
 @router.post("/profile", status_code=status.HTTP_201_CREATED)
 async def create_operator_profile(
     profile: OperatorProfileCreate,

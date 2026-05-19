@@ -175,6 +175,7 @@ watch(() => props.modelValue, (newVal) => {
 .map-view-container {
   position: relative;
   width: 100%;
+  z-index: 1;
 }
 
 .map-container {
@@ -182,6 +183,7 @@ watch(() => props.modelValue, (newVal) => {
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid #ddd;
+  z-index: 1;
 }
 
 .coordinates-display {

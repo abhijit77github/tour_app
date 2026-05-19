@@ -5,6 +5,9 @@
       <p class="subtitle">Monitor system activities and security events</p>
     </div>
 
+    <div v-if="loading" class="status-message">Loading audit data...</div>
+    <div v-else-if="loadError" class="error-message">{{ loadError }}</div>
+
     <!-- Tabs -->
     <div class="tabs">
       <button
@@ -708,9 +711,12 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import api from '../services/api'
 
 const activeTab = ref('activity')
+const loading = ref(false)
+const loadError = ref('')
 
 // Activity Log
 const activityLogs = ref([
@@ -1029,6 +1035,54 @@ const selectedActivity = ref(null)
 const showSessionModal = ref(false)
 const selectedSession = ref(null)
 
+const loadAuditSummary = async () => {
+  loading.value = true
+  loadError.value = ''
+
+  try {
+    const token = localStorage.getItem('adminToken')
+    if (!token) {
+      loadError.value = 'Admin token not found. Please login again.'
+      return
+    }
+
+    const response = await api.get('/admin/audit/summary', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+
+    const data = response.data || {}
+
+    if (Array.isArray(data.activityLogs)) activityLogs.value = data.activityLogs
+    if (Array.isArray(data.systemEvents)) systemEvents.value = data.systemEvents
+    if (Array.isArray(data.sessions)) sessions.value = data.sessions
+    if (Array.isArray(data.securityEvents)) securityEvents.value = data.securityEvents
+
+    failedLoginAttempts.value = Number(data.failedLoginAttempts || 0)
+    suspiciousActivities.value = Number(data.suspiciousActivities || 0)
+    anomaliesDetected.value = Number(data.anomaliesDetected || 0)
+    rateLimitHits.value = Number(data.rateLimitHits || 0)
+
+    if (data.activityStats) {
+      activityStats.value = {
+        ...activityStats.value,
+        ...data.activityStats
+      }
+    }
+
+    if (Array.isArray(data.topUsers)) topUsers.value = data.topUsers
+    if (typeof data.securityScore === 'number') securityScore.value = data.securityScore
+  } catch (error) {
+    console.error('Failed to load audit summary:', error)
+    loadError.value = error.response?.data?.detail || 'Failed to load audit data'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  loadAuditSummary()
+})
+
 // Methods
 const formatDateTime = (date) => {
   if (!date) return 'N/A'
@@ -1109,8 +1163,8 @@ const dismissEvent = (event) => {
   }
 }
 
-const refreshSessions = () => {
-  alert('Sessions refreshed')
+const refreshSessions = async () => {
+  await loadAuditSummary()
 }
 
 const terminateSession = (session) => {
@@ -1170,6 +1224,24 @@ const resetExportForm = () => {
   color: #718096;
   font-size: 1rem;
   margin: 0;
+}
+
+.status-message {
+  background: #ebf8ff;
+  color: #2b6cb0;
+  border: 1px solid #bee3f8;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.error-message {
+  background: #fff5f5;
+  color: #c53030;
+  border: 1px solid #fed7d7;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
 }
 
 /* Tabs */

@@ -34,11 +34,11 @@ export const useCartStore = defineStore('cart', {
 
     cartLocations: (state) => {
       return state.cartItems.map(item => ({
-        lat: item.coordinates?.latitude,
-        lng: item.coordinates?.longitude,
+        lat: Number(item.coordinates?.latitude),
+        lng: Number(item.coordinates?.longitude),
         title: item.sub_location_name,
         description: item.description
-      })).filter(loc => loc.lat && loc.lng);
+      })).filter(loc => Number.isFinite(loc.lat) && Number.isFinite(loc.lng));
     }
   },
 

@@ -177,7 +177,7 @@
               <!-- Actions -->
               <div class="quote-actions">
                 <router-link
-                  to="/operator/dashboard"
+                  :to="getQuoteRoute(quote._id)"
                   class="btn btn-primary btn-small"
                 >
                   Respond with Quote
@@ -200,7 +200,7 @@
             <div class="featured-icon">🌟</div>
             <h4>Premium Listing</h4>
             <p>Boost your visibility and attract more tourists</p>
-            <button class="btn btn-text-small">Learn More →</button>
+            <router-link to="/operator/dashboard" class="btn btn-text-small">Learn More →</router-link>
           </div>
         </section>
 
@@ -273,11 +273,14 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import api from '../services/api'
 
 const authStore = useAuthStore()
+const router = useRouter()
 const quoteRequests = ref([])
+const bookings = ref([])
 const loading = ref(true)
 const profile = ref(null)
 
@@ -285,10 +288,56 @@ const operatorName = computed(() => profile.value?.business_name || 'Operator')
 const quotesCount = computed(() => quoteRequests.value.length)
 const servingAreasCount = computed(() => profile.value?.serving_areas?.length || 0)
 const rating = computed(() => profile.value?.average_rating || 0)
-const bookingsCount = computed(() => 0) // TODO: Fetch from backend
-const responseRate = computed(() => 85)
-const avgResponseTime = computed(() => '2-4 hrs')
-const completionRate = computed(() => 92)
+const bookingsCount = computed(() => bookings.value.length)
+const responseRate = computed(() => {
+  const totalQuotes = quoteRequests.value.length
+  if (!totalQuotes) return 0
+
+  const myResponses = quoteRequests.value.filter((quote) =>
+    (quote.responses || []).some((resp) => resp.operator_id === profile.value?._id)
+  ).length
+
+  return Math.round((myResponses / totalQuotes) * 100)
+})
+
+const avgResponseTime = computed(() => {
+  if (!profile.value?._id) return 'N/A'
+
+  const responseHours = quoteRequests.value
+    .map((quote) => {
+      const myResponse = (quote.responses || [])
+        .filter((resp) => resp.operator_id === profile.value._id)
+        .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))[0]
+
+      if (!myResponse || !quote.created_at) return null
+
+      const createdAt = new Date(quote.created_at)
+      const respondedAt = new Date(myResponse.created_at)
+      const diffMs = respondedAt - createdAt
+
+      if (Number.isNaN(diffMs) || diffMs < 0) return null
+      return diffMs / (1000 * 60 * 60)
+    })
+    .filter((v) => v !== null)
+
+  if (!responseHours.length) return 'N/A'
+
+  const avgHours = responseHours.reduce((sum, h) => sum + h, 0) / responseHours.length
+  if (avgHours < 1) return '<1 hr'
+  if (avgHours < 24) return `${Math.round(avgHours)} hrs`
+  return `${Math.round(avgHours / 24)} days`
+})
+
+const completionRate = computed(() => {
+  const totalBookings = bookings.value.length
+  if (!totalBookings) return 0
+
+  const completed = bookings.value.filter(
+    (booking) => booking.booking_status?.status === 'completed'
+  ).length
+
+  return Math.round((completed / totalBookings) * 100)
+})
 
 const getQuoteStatus = (quote) => {
   if (quote.responses?.some(r => r.operator_id === authStore.user._id)) {
@@ -327,21 +376,31 @@ const formatTime = (dateString) => {
   return date.toLocaleDateString()
 }
 
-const markAsRead = (quoteId) => {
-  // TODO: Implement mark as read
+const markAsRead = async (quoteId) => {
+  await router.push({
+    name: 'OperatorQuoteRequests',
+    query: { quoteId }
+  })
 }
+
+const getQuoteRoute = (quoteId) => ({
+  name: 'OperatorQuoteRequests',
+  query: { quoteId }
+})
 
 onMounted(async () => {
   try {
     // Fetch operator profile
     const profileRes = await api.get('/operators/profile/me')
-    console.log('Profile response:', profileRes.data)
     profile.value = profileRes.data
 
     // Fetch quote inbox
     const quotesRes = await api.get('/quotes/inbox')
-    console.log('Quotes response:', quotesRes.data)
     quoteRequests.value = quotesRes.data.quotes || []
+
+    // Fetch booking requests for summary cards
+    const bookingsRes = await api.get('/bookings/my-bookings')
+    bookings.value = bookingsRes.data.bookings || []
   } catch (error) {
     console.error('Failed to load operator home data:', error)
     if (error.response) {
@@ -503,6 +562,12 @@ onMounted(async () => {
   border-color: #2563eb;
   transform: translateY(-4px);
   box-shadow: 0 12px 32px rgba(37, 99, 235, 0.15);
+}
+
+.nav-card:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 2px;
+  border-color: #2563eb;
 }
 
 .nav-card:hover::before {
@@ -773,6 +838,11 @@ onMounted(async () => {
   box-shadow: 0 8px 16px rgba(37, 99, 235, 0.3);
 }
 
+.btn:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 2px;
+}
+
 .btn-secondary {
   background: #f0f4f8;
   color: #1f2d3d;
@@ -798,6 +868,12 @@ onMounted(async () => {
 .btn-text:hover {
   color: #1e40af;
   text-decoration: underline;
+}
+
+.btn-text-small {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
 }
 
 /* Empty State */
@@ -1075,6 +1151,20 @@ onMounted(async () => {
   .main-content {
     gap: 1rem;
     padding: 0 0.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-card,
+  .quote-card,
+  .btn,
+  .stat-card,
+  .arrow {
+    transition: none !important;
+  }
+
+  .spinner {
+    animation-duration: 1.6s;
   }
 }
 </style>

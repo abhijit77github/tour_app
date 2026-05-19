@@ -1,8 +1,13 @@
 <template>
   <div class="admin-dashboard">
     <div class="dashboard-header">
-      <h1>Dashboard</h1>
-      <p class="subtitle">Welcome back! Here's your business overview.</p>
+      <div>
+        <h1>Dashboard</h1>
+        <p class="subtitle">Welcome back! Here's your business overview.</p>
+      </div>
+      <button class="refresh-button" @click="fetchDashboardData" :disabled="loading">
+        {{ loading ? 'Refreshing...' : 'Refresh Data' }}
+      </button>
     </div>
 
     <!-- Loading State -->
@@ -175,7 +180,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import api from '../services/api'
 
 const loading = ref(true)
@@ -196,6 +201,7 @@ const responseTime = ref({
   maximum_hours: 0,
   median_hours: 0
 })
+let refreshIntervalId = null
 
 const getPercentage = (part, total) => {
   if (!total) return 0
@@ -245,7 +251,14 @@ const fetchDashboardData = async () => {
 onMounted(() => {
   fetchDashboardData()
   // Refresh data every 30 seconds
-  setInterval(fetchDashboardData, 30000)
+  refreshIntervalId = setInterval(fetchDashboardData, 30000)
+})
+
+onUnmounted(() => {
+  if (refreshIntervalId) {
+    clearInterval(refreshIntervalId)
+    refreshIntervalId = null
+  }
 })
 </script>
 
@@ -255,7 +268,38 @@ onMounted(() => {
 }
 
 .dashboard-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
   margin-bottom: 2rem;
+}
+
+.refresh-button {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #1e293b;
+  border-radius: 10px;
+  padding: 0.6rem 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.refresh-button:hover:not(:disabled) {
+  border-color: #94a3b8;
+  background: #eef2f7;
+}
+
+.refresh-button:focus-visible,
+.action-button:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 2px;
+}
+
+.refresh-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 
 .dashboard-header h1 {
@@ -571,6 +615,11 @@ onMounted(() => {
 
 /* Responsive */
 @media (max-width: 768px) {
+  .dashboard-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .metrics-grid {
     grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   }
@@ -589,6 +638,16 @@ onMounted(() => {
 
   .dashboard-header h1 {
     font-size: 1.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .metric-card,
+  .bar,
+  .action-button,
+  .refresh-button,
+  .list-item {
+    transition: none !important;
   }
 }
 </style>

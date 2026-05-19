@@ -84,11 +84,15 @@
           </div>
         </header>
         <div class="scroll-row-limited">
-          <RecommendationCard
-            v-for="rec in recommendations.personalized.slice(0, 5)"
-            :key="rec.operator_id + rec.area_name"
-            :rec="rec"
-          />
+          <p v-if="loading" class="inline-state">Loading recommendations...</p>
+          <p v-else-if="!recommendations.personalized.length" class="inline-state">No personalized recommendations yet. Explore destinations to train your feed.</p>
+          <template v-else>
+            <RecommendationCard
+              v-for="rec in recommendations.personalized.slice(0, 5)"
+              :key="rec.operator_id + rec.area_name"
+              :rec="rec"
+            />
+          </template>
         </div>
       </div>
     </section>
@@ -105,11 +109,15 @@
             </div>
           </header>
           <div class="scroll-column">
-            <RecommendationCard
-              v-for="rec in recommendations.popular"
-              :key="rec.operator_id + rec.area_name + '-pop'"
-              :rec="rec"
-            />
+            <p v-if="loading" class="inline-state">Loading trending destinations...</p>
+            <p v-else-if="!recommendations.popular.length" class="inline-state">No trending destinations available right now.</p>
+            <template v-else>
+              <RecommendationCard
+                v-for="rec in recommendations.popular"
+                :key="rec.operator_id + rec.area_name + '-pop'"
+                :rec="rec"
+              />
+            </template>
           </div>
         </div>
       </main>
@@ -126,6 +134,9 @@
               v-for="(rec, idx) in recommendations.sponsored.slice(0, 4)" 
               :key="rec.operator_id + rec.area_name + '-spon'"
               @click="selectFeatured(rec)"
+              @keyup.enter="selectFeatured(rec)"
+              tabindex="0"
+              :class="{ selected: selectedFeatured?.operator_id === rec.operator_id && selectedFeatured?.area_name === rec.area_name }"
             >
               <div class="featured-item-inner">
                 <div class="item-image">
@@ -148,6 +159,7 @@
               </div>
             </div>
           </div>
+          <p v-if="!loading && !recommendations.sponsored.length" class="inline-state">No featured experiences available at the moment.</p>
         </div>
       </aside>
     </div>
@@ -204,7 +216,7 @@ export default {
 
 <style scoped>
 /* CSS Variables */
-:root {
+.tourist-home {
   --color-primary: #2563eb;
   --color-primary-dark: #1e40af;
   --color-secondary: #8b5cf6;
@@ -537,6 +549,13 @@ export default {
   transform: scale(1.1);
 }
 
+.btn-icon-only:focus-visible,
+.btn:focus-visible,
+.featured-item:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 2px;
+}
+
 .btn-icon-only:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -706,6 +725,11 @@ export default {
   flex-shrink: 0;
 }
 
+.featured-item.selected .featured-item-inner {
+  border-color: #2563eb;
+  box-shadow: 0 10px 28px rgba(37, 99, 235, 0.2);
+}
+
 .featured-item:hover .featured-item-inner {
   transform: translateY(-4px);
   box-shadow: 0 12px 32px rgba(37, 99, 235, 0.15);
@@ -820,6 +844,15 @@ export default {
 .btn.btn-small:hover {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+}
+
+.inline-state {
+  color: #64748b;
+  font-weight: 600;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
 }
 
 /* ==================== RESPONSIVE DESIGN ==================== */
@@ -949,6 +982,21 @@ export default {
 
   .featured-items {
     gap: 0.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gradient-blob,
+  .floating-card,
+  .spinning {
+    animation: none !important;
+  }
+
+  .btn,
+  .featured-item,
+  .featured-item-inner,
+  .item-image img {
+    transition: none !important;
   }
 }
 </style>

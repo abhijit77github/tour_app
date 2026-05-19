@@ -1,14 +1,35 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
 from bson import ObjectId
+from email_validator import EmailNotValidError, validate_email
+
+
+def validate_app_email(value: str) -> str:
+    email = value.strip().lower()
+    if "@" not in email:
+        raise ValueError("Email must contain @")
+    local_part, domain = email.rsplit("@", 1)
+    if not local_part or not domain:
+        raise ValueError("Invalid email address")
+    if domain.endswith(".local"):
+        return email
+    try:
+        return validate_email(email, check_deliverability=False).normalized
+    except EmailNotValidError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 class AdminBase(BaseModel):
-    email: EmailStr
+    email: str
     full_name: str
     phone: Optional[str] = None
     role: str = Field(default="moderator", description="super_admin or moderator")
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_field(cls, value: str) -> str:
+        return validate_app_email(value)
 
 
 class AdminCreate(AdminBase):
@@ -40,8 +61,13 @@ class Admin(AdminBase):
 
 
 class AdminLogin(BaseModel):
-    email: EmailStr
+    email: str
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_field(cls, value: str) -> str:
+        return validate_app_email(value)
 
 
 class AdminToken(BaseModel):

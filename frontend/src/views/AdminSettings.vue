@@ -5,6 +5,9 @@
       <p class="subtitle">Configure and manage all system settings and configurations</p>
     </div>
 
+    <div v-if="loading" class="status-message">Loading settings data...</div>
+    <div v-else-if="loadError" class="error-message">{{ loadError }}</div>
+
     <!-- Tabs -->
     <div class="tabs">
       <button
@@ -761,9 +764,12 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import api from '../services/api'
 
 const activeTab = ref('general')
+const loading = ref(false)
+const loadError = ref('')
 
 // General Settings
 const settings = ref({
@@ -940,6 +946,71 @@ const webhookForm = ref({
   url: ''
 })
 
+const getAdminConfig = () => {
+  const token = localStorage.getItem('adminToken')
+  if (!token) {
+    throw new Error('Admin token not found. Please login again.')
+  }
+  return { headers: { Authorization: `Bearer ${token}` } }
+}
+
+const loadSettingsSummary = async () => {
+  loading.value = true
+  loadError.value = ''
+
+  try {
+    const token = localStorage.getItem('adminToken')
+    if (!token) {
+      loadError.value = 'Admin token not found. Please login again.'
+      return
+    }
+
+    const response = await api.get('/admin/settings/summary', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+
+    const data = response.data || {}
+
+    if (data.settings) {
+      settings.value = {
+        ...settings.value,
+        ...data.settings
+      }
+    }
+
+    if (data.systemHealth) {
+      systemHealth.value = {
+        ...systemHealth.value,
+        ...data.systemHealth
+      }
+    }
+
+    if (Array.isArray(data.adminUsers)) adminUsers.value = data.adminUsers
+    if (data.backupInfo) backupInfo.value = { ...backupInfo.value, ...data.backupInfo }
+    if (Array.isArray(data.backupHistory)) backupHistory.value = data.backupHistory
+    if (data.maintenanceInfo) maintenanceInfo.value = { ...maintenanceInfo.value, ...data.maintenanceInfo }
+    if (data.securitySettings) {
+      securitySettings.value = { ...securitySettings.value, ...data.securitySettings }
+      whitelistInput.value = (data.securitySettings.ipWhitelist || []).join('\n')
+    }
+    if (Array.isArray(data.apiKeys)) apiKeys.value = data.apiKeys
+    if (Array.isArray(data.webhooks)) webhooks.value = data.webhooks
+    if (Array.isArray(data.thirdPartyServices)) thirdPartyServices.value = data.thirdPartyServices
+    if (data.integrationSettings) {
+      integrationSettings.value = { ...integrationSettings.value, ...data.integrationSettings }
+    }
+  } catch (error) {
+    console.error('Failed to load settings summary:', error)
+    loadError.value = error.response?.data?.detail || 'Failed to load settings data'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  loadSettingsSummary()
+})
+
 // Methods
 const formatDate = (date) => {
   if (!date) return 'N/A'
@@ -956,15 +1027,17 @@ const getInitials = (name) => {
 }
 
 const saveGeneralSettings = () => {
-  alert('General settings saved successfully!')
+  api.post('/admin/settings/general', settings.value.general, getAdminConfig())
+    .then(() => alert('General settings saved successfully!'))
+    .catch((error) => alert(error.response?.data?.detail || error.message || 'Failed to save settings'))
 }
 
 const saveLocalization = () => {
-  alert('Localization settings saved!')
+  saveGeneralSettings()
 }
 
 const saveFeatureFlags = () => {
-  alert('Feature flags saved!')
+  saveGeneralSettings()
 }
 
 const checkSystemHealth = () => {
@@ -976,7 +1049,12 @@ const viewDetailedLogs = () => {
 }
 
 const editUser = (user) => {
-  alert(`Editing user: ${user.name}`)
+  api.patch(`/admin/settings/admin-users/${user._id}`, {
+    role: user.role,
+    name: user.name
+  }, getAdminConfig())
+    .then(() => alert(`Updated user: ${user.name}`))
+    .catch((error) => alert(error.response?.data?.detail || error.message || 'Failed to update user'))
 }
 
 const resetUserPassword = (user) => {
@@ -987,8 +1065,15 @@ const resetUserPassword = (user) => {
 
 const deactivateUser = (user) => {
   if (confirm(`Deactivate user ${user.name}?`)) {
-    user.status = 'inactive'
-    alert('User deactivated')
+    api.patch(`/admin/settings/admin-users/${user._id}`, {
+      status: 'inactive'
+    }, getAdminConfig())
+      .then(async () => {
+        user.status = 'inactive'
+        alert('User deactivated')
+        await loadSettingsSummary()
+      })
+      .catch((error) => alert(error.response?.data?.detail || error.message || 'Failed to deactivate user'))
   }
 }
 
@@ -1058,20 +1143,22 @@ const downloadBackup = (backup) => {
 }
 
 const saveAuthSettings = () => {
-  alert('Authentication settings saved!')
+  api.post('/admin/settings/security', securitySettings.value, getAdminConfig())
+    .then(() => alert('Authentication settings saved!'))
+    .catch((error) => alert(error.response?.data?.detail || error.message || 'Failed to save security settings'))
 }
 
 const savePasswordPolicy = () => {
-  alert('Password policy updated!')
+  saveAuthSettings()
 }
 
 const saveIpWhitelist = () => {
   securitySettings.value.ipWhitelist = whitelistInput.value.split('\n').filter(ip => ip.trim())
-  alert('IP whitelist saved!')
+  saveAuthSettings()
 }
 
 const saveDataProtection = () => {
-  alert('Data protection settings saved!')
+  saveAuthSettings()
 }
 
 const maskApiKey = (key) => {
@@ -1084,9 +1171,14 @@ const copyApiKey = (key) => {
 
 const revokeApiKey = (key) => {
   if (confirm(`Revoke API key "${key.name}"?`)) {
-    const index = apiKeys.value.findIndex(k => k._id === key._id)
-    if (index > -1) apiKeys.value.splice(index, 1)
-    alert('API key revoked')
+    api.delete(`/admin/settings/api-keys/${key._id}`, getAdminConfig())
+      .then(async () => {
+        const index = apiKeys.value.findIndex(k => k._id === key._id)
+        if (index > -1) apiKeys.value.splice(index, 1)
+        alert('API key revoked')
+        await loadSettingsSummary()
+      })
+      .catch((error) => alert(error.response?.data?.detail || error.message || 'Failed to revoke API key'))
   }
 }
 
@@ -1096,18 +1188,21 @@ const generateApiKey = () => {
     return
   }
 
-  const newKey = {
-    _id: Date.now().toString(),
+  api.post('/admin/settings/api-keys', {
     name: apiKeyForm.value.name,
-    key: 'sk_live_' + Math.random().toString(36).substr(2, 24),
-    created_at: new Date(),
-    lastUsed: null
-  }
-
-  apiKeys.value.push(newKey)
-  alert(`API key "${newKey.name}" generated successfully!`)
-  showGenerateKeyModal.value = false
-  apiKeyForm.value = { name: '', permissions: [] }
+    permissions: apiKeyForm.value.permissions
+  }, getAdminConfig()).then(async (response) => {
+    const newKey = response.data?.apiKey
+    if (newKey) {
+      apiKeys.value.push(newKey)
+    }
+    alert(`API key "${apiKeyForm.value.name}" generated successfully!`)
+    showGenerateKeyModal.value = false
+    apiKeyForm.value = { name: '', permissions: [] }
+    await loadSettingsSummary()
+  }).catch((error) => {
+    alert(error.response?.data?.detail || error.message || 'Failed to generate API key')
+  })
 }
 
 const testWebhook = (webhook) => {
@@ -1116,9 +1211,14 @@ const testWebhook = (webhook) => {
 
 const deleteWebhook = (webhook) => {
   if (confirm(`Delete webhook for ${webhook.event}?`)) {
-    const index = webhooks.value.findIndex(w => w._id === webhook._id)
-    if (index > -1) webhooks.value.splice(index, 1)
-    alert('Webhook deleted')
+    api.delete(`/admin/settings/webhooks/${webhook._id}`, getAdminConfig())
+      .then(async () => {
+        const index = webhooks.value.findIndex(w => w._id === webhook._id)
+        if (index > -1) webhooks.value.splice(index, 1)
+        alert('Webhook deleted')
+        await loadSettingsSummary()
+      })
+      .catch((error) => alert(error.response?.data?.detail || error.message || 'Failed to delete webhook'))
   }
 }
 
@@ -1128,17 +1228,21 @@ const saveWebhook = () => {
     return
   }
 
-  const newWebhook = {
-    _id: Date.now().toString(),
+  api.post('/admin/settings/webhooks', {
     event: webhookForm.value.event,
-    url: webhookForm.value.url,
-    status: 'active'
-  }
-
-  webhooks.value.push(newWebhook)
-  alert('Webhook added successfully!')
-  showAddWebhookModal.value = false
-  webhookForm.value = { event: '', url: '' }
+    url: webhookForm.value.url
+  }, getAdminConfig()).then(async (response) => {
+    const newWebhook = response.data?.webhook
+    if (newWebhook) {
+      webhooks.value.push(newWebhook)
+    }
+    alert('Webhook added successfully!')
+    showAddWebhookModal.value = false
+    webhookForm.value = { event: '', url: '' }
+    await loadSettingsSummary()
+  }).catch((error) => {
+    alert(error.response?.data?.detail || error.message || 'Failed to add webhook')
+  })
 }
 
 const connectService = (service) => {
@@ -1154,7 +1258,9 @@ const disconnectService = (service) => {
 }
 
 const saveRateLimiting = () => {
-  alert('Rate limiting settings saved!')
+  api.post('/admin/settings/integration', integrationSettings.value, getAdminConfig())
+    .then(() => alert('Rate limiting settings saved!'))
+    .catch((error) => alert(error.response?.data?.detail || error.message || 'Failed to save integration settings'))
 }
 </script>
 
@@ -1178,6 +1284,24 @@ const saveRateLimiting = () => {
   color: #718096;
   font-size: 1rem;
   margin: 0;
+}
+
+.status-message {
+  background: #ebf8ff;
+  color: #2b6cb0;
+  border: 1px solid #bee3f8;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.error-message {
+  background: #fff5f5;
+  color: #c53030;
+  border: 1px solid #fed7d7;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
 }
 
 /* Tabs */

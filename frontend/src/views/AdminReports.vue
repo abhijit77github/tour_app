@@ -5,6 +5,9 @@
       <p class="subtitle">Build, manage, and schedule comprehensive reports</p>
     </div>
 
+    <div v-if="loading" class="status-message">Loading reports data...</div>
+    <div v-else-if="loadError" class="error-message">{{ loadError }}</div>
+
     <!-- Tabs -->
     <div class="tabs">
       <button
@@ -622,9 +625,12 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import api from '../services/api'
 
 const activeTab = ref('builder')
+const loading = ref(false)
+const loadError = ref('')
 
 // Report Builder
 const prebuiltTemplates = ref([
@@ -812,6 +818,58 @@ const dashboardForm = ref({
   widgets: []
 })
 
+const getAdminConfig = () => {
+  const token = localStorage.getItem('adminToken')
+  if (!token) {
+    throw new Error('Admin token not found. Please login again.')
+  }
+  return { headers: { Authorization: `Bearer ${token}` } }
+}
+
+const loadReportsSummary = async () => {
+  loading.value = true
+  loadError.value = ''
+
+  try {
+    const token = localStorage.getItem('adminToken')
+    if (!token) {
+      loadError.value = 'Admin token not found. Please login again.'
+      return
+    }
+
+    const response = await api.get('/admin/reports/summary', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+
+    const data = response.data || {}
+
+    if (Array.isArray(data.prebuiltTemplates)) {
+      prebuiltTemplates.value = data.prebuiltTemplates
+    }
+
+    if (Array.isArray(data.reports)) {
+      reports.value = data.reports
+    }
+
+    if (Array.isArray(data.scheduledReports)) {
+      scheduledReports.value = data.scheduledReports
+    }
+
+    if (Array.isArray(data.dashboards)) {
+      dashboards.value = data.dashboards
+    }
+  } catch (error) {
+    console.error('Failed to load reports summary:', error)
+    loadError.value = error.response?.data?.detail || 'Failed to load reports data'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  loadReportsSummary()
+})
+
 // Methods
 const formatDate = (date) => {
   if (!date) return 'N/A'
@@ -842,21 +900,22 @@ const generateCustomReport = async () => {
     alert('Please enter a report name')
     return
   }
-  
-  const newReport = {
-    _id: Date.now().toString(),
-    name: customReport.value.name,
-    type: customReport.value.type,
-    status: 'completed',
-    size: (Math.random() * 5 + 1).toFixed(1) + ' MB',
-    generated_by: 'Admin User',
-    created_at: new Date(),
-    updated_at: new Date()
+
+  try {
+    await api.post('/admin/reports', {
+      name: customReport.value.name,
+      type: customReport.value.type,
+      status: 'completed',
+      size: '1.0 MB',
+      description: `Date range ${customReport.value.dateFrom || 'N/A'} to ${customReport.value.dateTo || 'N/A'}`
+    }, getAdminConfig())
+
+    await loadReportsSummary()
+    alert(`Report "${customReport.value.name}" generated successfully!`)
+    customReport.value = { name: '', type: 'revenue', dateFrom: '', dateTo: '', metrics: [] }
+  } catch (error) {
+    alert(error.response?.data?.detail || error.message || 'Failed to generate report')
   }
-  
-  reports.value.unshift(newReport)
-  alert(`Report "${newReport.name}" generated successfully!`)
-  customReport.value = { name: '', type: 'revenue', dateFrom: '', dateTo: '', metrics: [] }
 }
 
 const applyQuickFilter = (filter) => {
@@ -872,21 +931,34 @@ const downloadReport = (report) => {
 }
 
 const duplicateReport = (report) => {
-  const duplicated = {
-    ...report,
-    _id: Date.now().toString(),
-    name: `${report.name} (Copy)`,
-    created_at: new Date()
-  }
-  reports.value.unshift(duplicated)
-  alert(`Report duplicated: ${duplicated.name}`)
+  saveNewReportFromExisting(report)
 }
 
-const deleteReport = (report) => {
+const deleteReport = async (report) => {
   if (confirm(`Delete report "${report.name}"?`)) {
-    const index = reports.value.findIndex(r => r._id === report._id)
-    if (index > -1) reports.value.splice(index, 1)
-    alert('Report deleted')
+    try {
+      await api.delete(`/admin/reports/${report._id}`, getAdminConfig())
+      await loadReportsSummary()
+      alert('Report deleted')
+    } catch (error) {
+      alert(error.response?.data?.detail || error.message || 'Failed to delete report')
+    }
+  }
+}
+
+const saveNewReportFromExisting = async (report) => {
+  try {
+    await api.post('/admin/reports', {
+      name: `${report.name} (Copy)`,
+      type: report.type,
+      status: 'draft',
+      size: report.size || '0 MB',
+      description: 'Duplicated report draft'
+    }, getAdminConfig())
+    await loadReportsSummary()
+    alert(`Report duplicated: ${report.name} (Copy)`)
+  } catch (error) {
+    alert(error.response?.data?.detail || error.message || 'Failed to duplicate report')
   }
 }
 
@@ -895,43 +967,60 @@ const saveNewReport = () => {
     alert('Please fill in all required fields')
     return
   }
-  
-  const report = {
-    _id: Date.now().toString(),
+
+  api.post('/admin/reports', {
     name: newReportForm.value.name,
     type: newReportForm.value.type,
     status: 'draft',
     size: '0 MB',
-    generated_by: 'Admin User',
-    created_at: new Date(),
-    updated_at: new Date()
-  }
-  
-  reports.value.unshift(report)
-  alert(`Report "${report.name}" created as draft`)
-  showNewReportModal.value = false
-  newReportForm.value = { name: '', type: '', description: '' }
+    description: newReportForm.value.description
+  }, getAdminConfig()).then(async () => {
+    await loadReportsSummary()
+    alert(`Report "${newReportForm.value.name}" created as draft`)
+    showNewReportModal.value = false
+    newReportForm.value = { name: '', type: '', description: '' }
+  }).catch((error) => {
+    alert(error.response?.data?.detail || error.message || 'Failed to create report')
+  })
 }
 
 const editSchedule = (schedule) => {
   alert(`Editing schedule: ${schedule.report_name}`)
 }
 
-const pauseSchedule = (schedule) => {
-  schedule.status = 'paused'
-  alert(`Schedule paused: ${schedule.report_name}`)
+const pauseSchedule = async (schedule) => {
+  try {
+    await api.patch(`/admin/reports/schedules/${schedule._id}`, {
+      status: 'paused'
+    }, getAdminConfig())
+    await loadReportsSummary()
+    alert(`Schedule paused: ${schedule.report_name}`)
+  } catch (error) {
+    alert(error.response?.data?.detail || error.message || 'Failed to pause schedule')
+  }
 }
 
-const resumeSchedule = (schedule) => {
-  schedule.status = 'active'
-  alert(`Schedule resumed: ${schedule.report_name}`)
+const resumeSchedule = async (schedule) => {
+  try {
+    await api.patch(`/admin/reports/schedules/${schedule._id}`, {
+      status: 'active'
+    }, getAdminConfig())
+    await loadReportsSummary()
+    alert(`Schedule resumed: ${schedule.report_name}`)
+  } catch (error) {
+    alert(error.response?.data?.detail || error.message || 'Failed to resume schedule')
+  }
 }
 
-const deleteSchedule = (schedule) => {
+const deleteSchedule = async (schedule) => {
   if (confirm(`Delete schedule for "${schedule.report_name}"?`)) {
-    const index = scheduledReports.value.findIndex(s => s._id === schedule._id)
-    if (index > -1) scheduledReports.value.splice(index, 1)
-    alert('Schedule deleted')
+    try {
+      await api.delete(`/admin/reports/schedules/${schedule._id}`, getAdminConfig())
+      await loadReportsSummary()
+      alert('Schedule deleted')
+    } catch (error) {
+      alert(error.response?.data?.detail || error.message || 'Failed to delete schedule')
+    }
   }
 }
 
@@ -940,22 +1029,24 @@ const saveSchedule = () => {
     alert('Please fill in all required fields')
     return
   }
-  
-  const schedule = {
-    _id: Date.now().toString(),
-    report_name: 'New Scheduled Report',
+
+  const selectedReport = reports.value.find((r) => r._id === scheduleForm.value.report_id)
+  const payload = {
+    report_id: scheduleForm.value.report_id,
+    report_name: selectedReport?.name || 'Scheduled Report',
     frequency: scheduleForm.value.frequency,
-    recipients: scheduleForm.value.recipients.split(',').map(r => r.trim()),
-    format: scheduleForm.value.format,
-    status: 'active',
-    next_run: new Date(),
-    runs_count: 0
+    recipients: scheduleForm.value.recipients.split(',').map(r => r.trim()).filter(Boolean),
+    format: scheduleForm.value.format
   }
-  
-  scheduledReports.value.unshift(schedule)
-  alert('Report scheduled successfully!')
-  showScheduleModal.value = false
-  scheduleForm.value = { report_id: '', frequency: 'monthly', recipients: '', format: 'pdf' }
+
+  api.post('/admin/reports/schedules', payload, getAdminConfig()).then(async () => {
+    await loadReportsSummary()
+    alert('Report scheduled successfully!')
+    showScheduleModal.value = false
+    scheduleForm.value = { report_id: '', frequency: 'monthly', recipients: '', format: 'pdf' }
+  }).catch((error) => {
+    alert(error.response?.data?.detail || error.message || 'Failed to schedule report')
+  })
 }
 
 const previewFormat = (format) => {
@@ -1027,6 +1118,24 @@ const saveDashboard = () => {
   color: #718096;
   font-size: 1rem;
   margin: 0;
+}
+
+.status-message {
+  background: #ebf8ff;
+  color: #2b6cb0;
+  border: 1px solid #bee3f8;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.error-message {
+  background: #fff5f5;
+  color: #c53030;
+  border: 1px solid #fed7d7;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
 }
 
 /* Tabs */

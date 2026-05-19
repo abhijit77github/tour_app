@@ -2,7 +2,9 @@
   <div class="login-page">
     <div class="container">
       <div class="login-card card">
-        <h2>Login</h2>
+        <p class="kicker">Welcome back</p>
+        <h2>Sign In to Continue</h2>
+        <p class="intro">Use your tourist or operator account to access your dashboard.</p>
         <form @submit.prevent="handleLogin">
           <div class="form-group">
             <label for="email">Email</label>
@@ -101,17 +103,37 @@ export default {
   justify-content: center;
   align-items: center;
   min-height: calc(100vh - 200px);
+  padding: 1rem 0;
 }
 
 .login-card {
   max-width: 400px;
   width: 100%;
+  border-radius: 18px;
+}
+
+.kicker {
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #0f766e;
 }
 
 .login-card h2 {
   text-align: center;
-  margin-bottom: 1.5rem;
-  color: #2c3e50;
+  margin: 0.25rem 0 0.35rem;
+  color: #0f172a;
+  font-size: 1.75rem;
+  font-family: 'Fraunces', Georgia, serif;
+}
+
+.intro {
+  text-align: center;
+  margin-bottom: 1.35rem;
+  color: #64748b;
+  font-size: 0.95rem;
 }
 
 .btn-block {
@@ -125,8 +147,9 @@ export default {
 }
 
 .register-link a {
-  color: #3498db;
+  color: #0f766e;
   text-decoration: none;
+  font-weight: 700;
 }
 
 .register-link a:hover {
@@ -139,12 +162,21 @@ export default {
 }
 
 .forgot-password-link a {
-  color: #3498db;
+  color: #0f766e;
   text-decoration: none;
   font-size: 0.9rem;
+  font-weight: 600;
 }
 
 .forgot-password-link a:hover {
   text-decoration: underline;
+}
+
+.error {
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px solid rgba(220, 38, 38, 0.25);
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  margin-top: 0.25rem;
 }
 </style>

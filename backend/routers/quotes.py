@@ -185,7 +185,8 @@ async def search_operator_locations(query: str):
                     {"area_name": search_regex},
                     {"state": search_regex},
                     {"country": search_regex},
-                    {"sub_locations": search_regex}
+                    {"sub_locations.name": search_regex},
+                    {"sub_locations.description": search_regex}
                 ]
             }
         }
@@ -193,8 +194,10 @@ async def search_operator_locations(query: str):
     
     # Extract matching locations from operators
     seen_locations = set()
+    normalized_query = query.lower().strip()
+
     for operator in operators:
-        operator_name = operator.get("full_name", "Unknown Operator")
+        operator_name = operator.get("business_name", "Unknown Operator")
         operator_id = str(operator["_id"])
         
         for area in operator.get("serving_areas", []):
@@ -202,16 +205,27 @@ async def search_operator_locations(query: str):
             area_name = area.get("area_name", "")
             state = area.get("state", "")
             country = area.get("country", "")
+            sub_locations = area.get("sub_locations", [])
+
+            area_match = (
+                normalized_query in area_name.lower()
+                or normalized_query in state.lower()
+                or normalized_query in country.lower()
+            )
+
+            sub_location_match = any(
+                normalized_query in sub.get("name", "").lower()
+                or normalized_query in (sub.get("description", "") or "").lower()
+                for sub in sub_locations
+            )
             
-            if (query.lower() in area_name.lower() or 
-                query.lower() in state.lower() or 
-                query.lower() in country.lower()):
+            if area_match or sub_location_match:
                 
                 location_key = f"{area_name}|{state}|{country}"
                 if location_key not in seen_locations:
                     seen_locations.add(location_key)
                     
-                    coordinates = area.get("coordinates", {})
+                    coordinates = area.get("coordinates") or {}
                     operator_locations.append({
                         "id": f"operator_{operator_id}_{area_name}",
                         "name": area_name,
@@ -222,7 +236,9 @@ async def search_operator_locations(query: str):
                         "type": "operator_location",
                         "operator_name": operator_name,
                         "operator_id": operator_id,
-                        "sub_locations": area.get("sub_locations", [])
+                        "sub_locations": [
+                            sub.get("name") for sub in sub_locations if sub.get("name")
+                        ]
                     })
     
     return {

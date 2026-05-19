@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from .config import settings
 from .database import connect_to_mongo, close_mongo_connection, get_database
-from .routers import auth, operators, bookings, upload, chat, recommendations, quotes, admin
+from .routers import auth, operators, bookings, upload, chat, recommendations, quotes, admin, tour_planner
 
 # Create FastAPI app
 app = FastAPI(
@@ -58,6 +58,7 @@ app.include_router(auth.router)
 app.include_router(operators.router)
 app.include_router(bookings.router)
 app.include_router(upload.router)
+app.include_router(tour_planner.router)
 app.include_router(chat.router)
 app.include_router(recommendations.router)
 app.include_router(quotes.router)

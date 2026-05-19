@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_email: Optional[str] = None
     smtp_password: Optional[str] = None
+
+    # AWS Bedrock
+    aws_access_key_id: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None
+    aws_session_token: Optional[str] = None
+    aws_region: str = "us-east-1"
+    bedrock_model_id: str = "us.anthropic.claude-sonnet-4-20250514-v1:0"
     
     class Config:
         env_file = ".env"

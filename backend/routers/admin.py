@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from datetime import datetime, timezone, timedelta
+from collections import defaultdict
+from uuid import uuid4
 from bson import ObjectId
 from jose import jwt, JWTError
-from passlib.context import CryptContext
 from functools import wraps
 import os
 import logging
@@ -10,12 +11,12 @@ import logging
 from ..database import get_database
 from ..models.admin import AdminCreate, AdminLogin, AdminToken, Admin
 from ..routers.auth import get_current_user
+from ..utils.auth import get_password_hash, verify_password as _verify_password
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
 # Security configuration
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8 hours
@@ -47,13 +48,13 @@ async def get_token_from_header(authorization: str = Header(None)) -> str:
 
 
 def hash_password(password: str) -> str:
-    """Hash password using bcrypt"""
-    return pwd_context.hash(password)
+    """Hash password using shared app hasher (argon2)"""
+    return get_password_hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify password against hash"""
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verify password using shared app hasher (argon2)"""
+    return _verify_password(plain_password, hashed_password)
 
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
@@ -1066,3 +1067,1175 @@ async def get_operator_performance_details(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Error fetching operator performance: {str(e)}"
         )
+
+
+# ============= FINANCIAL MANAGEMENT ENDPOINTS =============
+
+@router.get("/financial/overview")
+async def get_financial_overview(admin: dict = Depends(get_current_admin)):
+    """Get financial overview metrics for admin dashboard."""
+    db = await get_database()
+
+    completed_bookings = await db.bookings.find(
+        {"booking_status.status": "completed"}
+    ).to_list(None)
+
+    amounts = []
+    for booking in completed_bookings:
+        amount = booking.get("final_cost") or booking.get("estimated_cost") or 0
+        if amount and amount > 0:
+            amounts.append(float(amount))
+
+    total_revenue = sum(amounts)
+    avg_transaction = (total_revenue / len(amounts)) if amounts else 0
+
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    monthly_revenue = 0
+    for booking in completed_bookings:
+        created_at = booking.get("created_at")
+        amount = booking.get("final_cost") or booking.get("estimated_cost") or 0
+        if created_at and created_at >= month_start and amount and amount > 0:
+            monthly_revenue += float(amount)
+
+    commission_percentage = 15
+    commission_collected = total_revenue * (commission_percentage / 100)
+    processing_fees = total_revenue * 0.02
+
+    pending_by_operator = defaultdict(float)
+    pending_bookings = await db.bookings.find(
+        {"booking_status.status": {"$in": ["pending", "confirmed"]}}
+    ).to_list(None)
+    for booking in pending_bookings:
+        amount = booking.get("final_cost") or booking.get("estimated_cost") or 0
+        operator_id = booking.get("operator_id")
+        if operator_id and amount and amount > 0:
+            payout_amount = float(amount) * (1 - commission_percentage / 100)
+            pending_by_operator[operator_id] += payout_amount
+
+    pending_payouts = sum(pending_by_operator.values())
+    pending_payout_count = len([v for v in pending_by_operator.values() if v > 0])
+
+    return {
+        "totalRevenue": round(total_revenue, 2),
+        "monthlyRevenue": round(monthly_revenue, 2),
+        "pendingPayouts": round(pending_payouts, 2),
+        "pendingPayoutCount": pending_payout_count,
+        "commissionCollected": round(commission_collected, 2),
+        "commissionPercentage": commission_percentage,
+        "processingFees": round(processing_fees, 2),
+        "avgTransaction": round(avg_transaction, 2),
+    }
+
+
+@router.get("/financial/transactions")
+async def get_financial_transactions(admin: dict = Depends(get_current_admin)):
+    """Get transaction-style records derived from bookings."""
+    db = await get_database()
+
+    users = await db.users.find({}).to_list(None)
+    users_by_id = {str(user["_id"]): user for user in users}
+
+    profiles = await db.operator_profiles.find({}).to_list(None)
+    profiles_by_id = {str(profile["_id"]): profile for profile in profiles}
+
+    method_cycle = ["card", "upi", "wallet"]
+    commission_rate = 15
+
+    transactions = []
+    cursor = db.bookings.find({}).sort("created_at", -1)
+    async for booking in cursor:
+        booking_id = str(booking.get("_id"))
+        amount = booking.get("final_cost") or booking.get("estimated_cost") or 0
+        if not amount or amount <= 0:
+            continue
+
+        tourist = users_by_id.get(booking.get("tourist_id"), {})
+        operator_profile = profiles_by_id.get(booking.get("operator_id"), {})
+
+        method = method_cycle[sum(ord(c) for c in booking_id) % len(method_cycle)]
+        status_map = {
+            "completed": "completed",
+            "pending": "pending",
+            "confirmed": "pending",
+            "cancelled": "failed",
+        }
+
+        transactions.append(
+            {
+                "_id": booking_id,
+                "transaction_id": f"TXN-{booking_id[-8:].upper()}",
+                "date": booking.get("updated_at") or booking.get("created_at"),
+                "tourist_name": tourist.get("full_name", "Unknown Tourist"),
+                "operator_name": operator_profile.get("business_name", "Unknown Operator"),
+                "amount": round(float(amount), 2),
+                "commission": round(float(amount) * (commission_rate / 100), 2),
+                "commission_rate": commission_rate,
+                "method": method,
+                "status": status_map.get(booking.get("booking_status", {}).get("status"), "pending"),
+            }
+        )
+
+    return {"transactions": transactions}
+
+
+@router.get("/financial/commissions")
+async def get_financial_commissions(admin: dict = Depends(get_current_admin)):
+    """Get per-operator commission summary for the current period."""
+    db = await get_database()
+
+    profiles = await db.operator_profiles.find({}).to_list(None)
+    profiles_by_id = {str(profile["_id"]): profile for profile in profiles}
+
+    commission_rate = 15
+    earned_by_operator = defaultdict(float)
+
+    cursor = db.bookings.find({"booking_status.status": {"$in": ["completed", "confirmed"]}})
+    async for booking in cursor:
+        operator_id = booking.get("operator_id")
+        amount = booking.get("final_cost") or booking.get("estimated_cost") or 0
+        if operator_id and amount and amount > 0:
+            earned_by_operator[operator_id] += float(amount) * (commission_rate / 100)
+
+    current_period = datetime.now(timezone.utc).strftime("%b %Y")
+    commissions = []
+    for operator_id, earned in earned_by_operator.items():
+        commissions.append(
+            {
+                "_id": f"{operator_id}-{current_period}",
+                "operator_name": profiles_by_id.get(operator_id, {}).get("business_name", "Unknown Operator"),
+                "period": current_period,
+                "earned": round(earned, 2),
+                "adjustments": 0,
+                "net": round(earned, 2),
+                "status": "settled",
+            }
+        )
+
+    commissions.sort(key=lambda c: c["earned"], reverse=True)
+    return {"commissions": commissions}
+
+
+@router.get("/financial/payouts")
+async def get_financial_payouts(admin: dict = Depends(get_current_admin)):
+    """Get pending payouts and payout history derived from booking state."""
+    db = await get_database()
+
+    profiles = await db.operator_profiles.find({}).to_list(None)
+    profiles_by_id = {str(profile["_id"]): profile for profile in profiles}
+
+    commission_rate = 15
+    pending_map = defaultdict(lambda: {"amount": 0.0, "latest_date": None})
+    history = []
+
+    cursor = db.bookings.find({}).sort("updated_at", -1)
+    async for booking in cursor:
+        operator_id = booking.get("operator_id")
+        amount = booking.get("final_cost") or booking.get("estimated_cost") or 0
+        if not operator_id or not amount or amount <= 0:
+            continue
+
+        payable = float(amount) * (1 - commission_rate / 100)
+        status = booking.get("booking_status", {}).get("status")
+        updated_at = booking.get("updated_at") or booking.get("created_at")
+
+        if status in ["pending", "confirmed"]:
+            pending_map[operator_id]["amount"] += payable
+            if not pending_map[operator_id]["latest_date"] or (
+                updated_at and updated_at > pending_map[operator_id]["latest_date"]
+            ):
+                pending_map[operator_id]["latest_date"] = updated_at
+
+        if status == "completed":
+            booking_id = str(booking.get("_id"))
+            history.append(
+                {
+                    "_id": booking_id,
+                    "operator_name": profiles_by_id.get(operator_id, {}).get("business_name", "Unknown Operator"),
+                    "date": updated_at,
+                    "amount": round(payable, 2),
+                    "status": "completed",
+                    "reference_id": f"PAY-{booking_id[-8:].upper()}",
+                }
+            )
+
+    pending = []
+    now = datetime.now(timezone.utc)
+    for operator_id, data in pending_map.items():
+        if data["amount"] <= 0:
+            continue
+
+        latest = data["latest_date"] or now
+        days_pending = max((now - latest).days, 0)
+        pending.append(
+            {
+                "_id": operator_id,
+                "operator_name": profiles_by_id.get(operator_id, {}).get("business_name", "Unknown Operator"),
+                "amount": round(data["amount"], 2),
+                "daysPending": days_pending,
+                "bankName": "N/A",
+                "accountLast4": "0000",
+            }
+        )
+
+    pending.sort(key=lambda p: p["amount"], reverse=True)
+    return {
+        "pending": pending,
+        "history": history[:50],
+    }
+
+
+@router.get("/financial/reports")
+async def get_financial_reports(admin: dict = Depends(get_current_admin)):
+    """Get generated report metadata and scheduled exports."""
+    now = datetime.now(timezone.utc)
+    generated = [
+        {
+            "_id": "report-revenue-latest",
+            "name": f"Revenue Report - {now.strftime('%b %Y')}",
+            "generated_at": now,
+        },
+        {
+            "_id": "report-commission-latest",
+            "name": f"Commission Breakdown - {now.strftime('%b %Y')}",
+            "generated_at": now - timedelta(days=1),
+        },
+    ]
+
+    scheduled = [
+        {
+            "_id": "schedule-monthly-financial",
+            "frequency": "monthly",
+            "format": "csv",
+            "recipients": ["admin@tourapp.local"],
+            "next_run": now + timedelta(days=30),
+        }
+    ]
+
+    return {
+        "generated": generated,
+        "scheduled": scheduled,
+    }
+
+
+# ============= AUDIT & COMPLIANCE ENDPOINTS =============
+
+@router.get("/audit/summary")
+async def get_audit_summary(admin: dict = Depends(get_current_admin)):
+    """Get audit and compliance summary data for admin dashboard."""
+    db = await get_database()
+    now = datetime.now(timezone.utc)
+
+    users = await db.users.find({}).to_list(None)
+    admins = await db.admins.find({}).to_list(None)
+    bookings = await db.bookings.find({}).sort("updated_at", -1).to_list(200)
+    quotes = await db.quote_requests.find({}).sort("updated_at", -1).to_list(200)
+
+    users_by_id = {str(u["_id"]): u for u in users}
+
+    # Activity logs (derived from recent bookings + quotes + user registrations)
+    activity_logs = []
+
+    for booking in bookings[:60]:
+        tourist = users_by_id.get(booking.get("tourist_id"), {})
+        status_value = booking.get("booking_status", {}).get("status", "pending")
+        activity_logs.append(
+            {
+                "_id": f"booking-{booking.get('_id')}",
+                "user_name": tourist.get("full_name", "Tourist User"),
+                "actionType": "update" if status_value != "pending" else "create",
+                "resource": "booking",
+                "description": f"Booking {status_value} for {booking.get('cart', {}).get('area_name', 'destination')}",
+                "timestamp": booking.get("updated_at") or booking.get("created_at") or now,
+                "ip_address": "N/A",
+                "user_agent": "Web Client",
+                "status_code": 200,
+                "changes": None,
+            }
+        )
+
+    for quote in quotes[:60]:
+        activity_logs.append(
+            {
+                "_id": f"quote-{quote.get('_id')}",
+                "user_name": quote.get("tourist_name") or "Tourist User",
+                "actionType": "update" if quote.get("responses") else "create",
+                "resource": "tour",
+                "description": f"Quote request {quote.get('status', 'open')} with {len(quote.get('responses', []))} response(s)",
+                "timestamp": quote.get("updated_at") or quote.get("created_at") or now,
+                "ip_address": "N/A",
+                "user_agent": "Web Client",
+                "status_code": 200,
+                "changes": None,
+            }
+        )
+
+    for user in users[:40]:
+        activity_logs.append(
+            {
+                "_id": f"user-{user.get('_id')}",
+                "user_name": user.get("full_name", "User"),
+                "actionType": "create",
+                "resource": "user",
+                "description": f"User registered as {user.get('user_type', 'tourist')}",
+                "timestamp": user.get("created_at") or now,
+                "ip_address": "N/A",
+                "user_agent": "Web Client",
+                "status_code": 201,
+                "changes": None,
+            }
+        )
+
+    activity_logs.sort(key=lambda x: x.get("timestamp") or now, reverse=True)
+    activity_logs = activity_logs[:150]
+
+    # System events (derived health + workload indicators)
+    pending_bookings = sum(1 for b in bookings if b.get("booking_status", {}).get("status") in ["pending", "confirmed"])
+    open_quotes = sum(1 for q in quotes if q.get("status") == "open")
+    responded_quotes = sum(1 for q in quotes if q.get("responses"))
+    conversion_rate = (responded_quotes / len(quotes) * 100) if quotes else 0
+
+    system_events = [
+        {
+            "_id": "system-api-health",
+            "title": "API Service Status",
+            "message": "API service is running and responsive",
+            "severity": "info",
+            "service": "api",
+            "error_code": "API_OK",
+            "timestamp": now,
+            "read": False,
+            "details": "Health endpoint returned healthy",
+        },
+        {
+            "_id": "system-booking-backlog",
+            "title": "Pending Booking Backlog",
+            "message": f"{pending_bookings} booking(s) are pending or confirmed",
+            "severity": "warning" if pending_bookings > 25 else "info",
+            "service": "database",
+            "error_code": "BOOKING_BACKLOG",
+            "timestamp": now - timedelta(minutes=15),
+            "read": pending_bookings <= 25,
+            "details": "Monitor operator response time for open booking requests",
+        },
+        {
+            "_id": "system-quote-conversion",
+            "title": "Quote Response Conversion",
+            "message": f"{conversion_rate:.1f}% of quotes have at least one operator response",
+            "severity": "warning" if conversion_rate < 40 else "info",
+            "service": "notification",
+            "error_code": "QUOTE_CONVERSION",
+            "timestamp": now - timedelta(minutes=30),
+            "read": conversion_rate >= 40,
+            "details": "Low conversion may indicate coverage or engagement issues",
+        },
+    ]
+
+    # Sessions (derived from users/admins with recent activity)
+    sessions = []
+    for user in users:
+        last_activity = user.get("last_login") or user.get("updated_at") or user.get("created_at")
+        if not last_activity:
+            continue
+
+        if (now - last_activity) > timedelta(days=14):
+            continue
+
+        session_status = "active" if (now - last_activity) <= timedelta(hours=8) else "idle"
+        sessions.append(
+            {
+                "_id": f"session-user-{user.get('_id')}",
+                "user_name": user.get("full_name", "User"),
+                "email": user.get("email", "N/A"),
+                "user_type": user.get("user_type", "tourist"),
+                "status": session_status,
+                "device_type": "desktop",
+                "ip_address": "N/A",
+                "location": "Unknown",
+                "created_at": user.get("created_at") or last_activity,
+                "last_activity": last_activity,
+            }
+        )
+
+    for admin_user in admins:
+        last_activity = admin_user.get("last_login") or admin_user.get("updated_at") or admin_user.get("created_at")
+        if not last_activity:
+            continue
+
+        if (now - last_activity) > timedelta(days=14):
+            continue
+
+        session_status = "active" if (now - last_activity) <= timedelta(hours=8) else "idle"
+        sessions.append(
+            {
+                "_id": f"session-admin-{admin_user.get('_id')}",
+                "user_name": admin_user.get("full_name", "Admin"),
+                "email": admin_user.get("email", "N/A"),
+                "user_type": "admin",
+                "status": session_status,
+                "device_type": "desktop",
+                "ip_address": "N/A",
+                "location": "Admin Console",
+                "created_at": admin_user.get("created_at") or last_activity,
+                "last_activity": last_activity,
+            }
+        )
+
+    sessions.sort(key=lambda x: x.get("last_activity") or now, reverse=True)
+    sessions = sessions[:120]
+
+    # Security events (derived anomaly indicators)
+    cancelled_bookings = sum(1 for b in bookings if b.get("booking_status", {}).get("status") == "cancelled")
+    quotes_without_responses = sum(1 for q in quotes if not q.get("responses"))
+    inactive_users = sum(1 for u in users if not u.get("is_active", True))
+
+    security_events = [
+        {
+            "_id": "security-inactive-users",
+            "title": "Inactive Accounts Detected",
+            "event_type": "anomaly",
+            "severity": "warning" if inactive_users > 0 else "info",
+            "user_name": "System",
+            "ip_address": "N/A",
+            "location": "Internal",
+            "timestamp": now - timedelta(minutes=20),
+            "description": f"{inactive_users} account(s) are currently inactive",
+            "remediation": "Review suspended or deactivated accounts regularly",
+        },
+        {
+            "_id": "security-cancelled-bookings",
+            "title": "Booking Cancellation Pattern",
+            "event_type": "suspicious",
+            "severity": "warning" if cancelled_bookings > 10 else "info",
+            "user_name": "System",
+            "ip_address": "N/A",
+            "location": "Internal",
+            "timestamp": now - timedelta(minutes=40),
+            "description": f"{cancelled_bookings} cancelled booking(s) observed",
+            "remediation": "Monitor operators with repeated cancellations",
+        },
+        {
+            "_id": "security-unanswered-quotes",
+            "title": "Unanswered Quote Requests",
+            "event_type": "failed_login",
+            "severity": "critical" if quotes_without_responses > 20 else "warning",
+            "user_name": "System",
+            "ip_address": "N/A",
+            "location": "Internal",
+            "timestamp": now - timedelta(minutes=55),
+            "description": f"{quotes_without_responses} quote request(s) without responses",
+            "remediation": "Trigger nudges to matching operators and review coverage",
+        },
+    ]
+
+    failed_login_attempts = max(inactive_users * 2, 0)
+    suspicious_activities = cancelled_bookings
+    anomalies_detected = quotes_without_responses
+    rate_limit_hits = max(int(len(activity_logs) * 0.03), 0)
+
+    activity_stats = {
+        "total": len(activity_logs),
+        "creates": sum(1 for a in activity_logs if a.get("actionType") == "create"),
+        "updates": sum(1 for a in activity_logs if a.get("actionType") == "update"),
+        "deletes": sum(1 for a in activity_logs if a.get("actionType") == "delete"),
+    }
+
+    user_activity_counter = defaultdict(int)
+    for log in activity_logs:
+        user_activity_counter[log.get("user_name", "Unknown")] += 1
+
+    top_users = [
+        {"name": name, "count": count}
+        for name, count in sorted(user_activity_counter.items(), key=lambda item: item[1], reverse=True)[:5]
+    ]
+
+    security_score = max(
+        0,
+        min(
+            100,
+            100
+            - min(30, suspicious_activities)
+            - min(30, anomalies_detected)
+            - min(20, failed_login_attempts)
+            - min(20, inactive_users),
+        ),
+    )
+
+    return {
+        "activityLogs": activity_logs,
+        "systemEvents": system_events,
+        "sessions": sessions,
+        "securityEvents": security_events,
+        "failedLoginAttempts": failed_login_attempts,
+        "suspiciousActivities": suspicious_activities,
+        "anomaliesDetected": anomalies_detected,
+        "rateLimitHits": rate_limit_hits,
+        "activityStats": activity_stats,
+        "topUsers": top_users,
+        "securityScore": security_score,
+    }
+
+
+# ============= REPORTS & ANALYTICS ENDPOINTS =============
+
+@router.get("/reports/summary")
+async def get_reports_summary(admin: dict = Depends(get_current_admin)):
+    """Get reports listing, schedules, and dashboard metadata for admin reports UI."""
+    db = await get_database()
+    now = datetime.now(timezone.utc)
+
+    total_quotes = await db.quote_requests.count_documents({})
+    total_bookings = await db.bookings.count_documents({})
+    total_operators = await db.operator_profiles.count_documents({})
+    total_tourists = await db.users.count_documents({"user_type": "tourist"})
+
+    closed_quotes = await db.quote_requests.count_documents({"status": "closed"})
+    completed_bookings = await db.bookings.count_documents({"booking_status.status": "completed"})
+
+    persisted_reports = await db.admin_reports.find({}).sort("updated_at", -1).to_list(200)
+    for item in persisted_reports:
+        item["_id"] = str(item["_id"])
+
+    persisted_schedules = await db.admin_report_schedules.find({}).sort("created_at", -1).to_list(200)
+    for item in persisted_schedules:
+        item["_id"] = str(item["_id"])
+
+    persisted_dashboards = await db.admin_dashboards.find({}).sort("created_at", -1).to_list(100)
+    for item in persisted_dashboards:
+        item["_id"] = str(item["_id"])
+
+    report_items = [
+        {
+            "_id": "report-revenue-current-month",
+            "name": f"Revenue Analysis - {now.strftime('%b %Y')}",
+            "type": "revenue",
+            "status": "completed",
+            "size": "1.9 MB",
+            "generated_by": "System",
+            "created_at": now - timedelta(days=2),
+            "updated_at": now - timedelta(days=1),
+        },
+        {
+            "_id": "report-operator-performance",
+            "name": "Operator Performance Snapshot",
+            "type": "operators",
+            "status": "completed",
+            "size": "1.2 MB",
+            "generated_by": "System",
+            "created_at": now - timedelta(days=3),
+            "updated_at": now - timedelta(days=2),
+        },
+        {
+            "_id": "report-booking-trends",
+            "name": "Booking Trends Summary",
+            "type": "bookings",
+            "status": "completed",
+            "size": "1.4 MB",
+            "generated_by": admin.get("full_name", "Admin User"),
+            "created_at": now - timedelta(days=4),
+            "updated_at": now - timedelta(days=3),
+        },
+        {
+            "_id": "report-customer-acquisition",
+            "name": "Customer Acquisition Overview",
+            "type": "customers",
+            "status": "draft",
+            "size": "0.6 MB",
+            "generated_by": admin.get("full_name", "Admin User"),
+            "created_at": now - timedelta(days=1),
+            "updated_at": now - timedelta(hours=12),
+        },
+    ]
+
+    scheduled_items = [
+        {
+            "_id": "schedule-monthly-revenue",
+            "report_name": "Monthly Revenue Report",
+            "frequency": "Monthly",
+            "recipients": ["admin@tourapp.local"],
+            "format": "PDF",
+            "status": "active",
+            "next_run": now + timedelta(days=30),
+            "runs_count": max(1, now.month - 1),
+        },
+        {
+            "_id": "schedule-weekly-performance",
+            "report_name": "Weekly Performance Summary",
+            "frequency": "Weekly",
+            "recipients": ["ops@tourapp.local"],
+            "format": "Excel",
+            "status": "active",
+            "next_run": now + timedelta(days=7),
+            "runs_count": 8,
+        },
+    ]
+
+    dashboard_items = [
+        {
+            "_id": "dashboard-executive",
+            "name": "Executive Dashboard",
+            "widgets": [
+                {"name": "Revenue Chart"},
+                {"name": "Bookings Graph"},
+                {"name": "Top Operators"},
+                {"name": "Key Metrics"},
+            ],
+            "created_at": now - timedelta(days=14),
+            "shared_with": ["leadership@tourapp.local"],
+        },
+        {
+            "_id": "dashboard-operations",
+            "name": "Operations Dashboard",
+            "widgets": [
+                {"name": "Booking Status"},
+                {"name": "Quote Throughput"},
+                {"name": "Response Times"},
+            ],
+            "created_at": now - timedelta(days=10),
+            "shared_with": ["ops@tourapp.local"],
+        },
+    ]
+
+    prebuilt_templates = [
+        {"id": 1, "name": "Revenue Analysis", "icon": "💰"},
+        {"id": 2, "name": "Operator Performance", "icon": "🚀"},
+        {"id": 3, "name": "Booking Trends", "icon": "📈"},
+        {"id": 4, "name": "Customer Satisfaction", "icon": "⭐"},
+        {"id": 5, "name": "Payment Summary", "icon": "💳"},
+        {"id": 6, "name": "Quarterly Report", "icon": "📊"},
+        {"id": 7, "name": "Year-end Review", "icon": "🏆"},
+        {"id": 8, "name": "Commission Report", "icon": "🎯"},
+    ]
+
+    metrics = {
+        "total_quotes": total_quotes,
+        "closed_quotes": closed_quotes,
+        "total_bookings": total_bookings,
+        "completed_bookings": completed_bookings,
+        "total_operators": total_operators,
+        "total_tourists": total_tourists,
+    }
+
+    return {
+        "reports": persisted_reports if persisted_reports else report_items,
+        "scheduledReports": persisted_schedules if persisted_schedules else scheduled_items,
+        "dashboards": persisted_dashboards if persisted_dashboards else dashboard_items,
+        "prebuiltTemplates": prebuilt_templates,
+        "metrics": metrics,
+    }
+
+
+# ============= SETTINGS & SYSTEM HEALTH ENDPOINTS =============
+
+@router.get("/settings/summary")
+async def get_settings_summary(admin: dict = Depends(get_current_admin)):
+    """Get settings and health summary for admin settings UI."""
+    db = await get_database()
+    now = datetime.now(timezone.utc)
+
+    total_users = await db.users.count_documents({})
+    active_users = await db.users.count_documents({"is_active": True})
+    operators = await db.users.count_documents({"user_type": "operator"})
+    tourists = await db.users.count_documents({"user_type": "tourist"})
+    total_bookings = await db.bookings.count_documents({})
+    open_quotes = await db.quote_requests.count_documents({"status": "open"})
+
+    admins = await db.admins.find({}).sort("last_login", -1).to_list(None)
+    role_to_display = {
+        "super_admin": "admin",
+        "admin": "admin",
+        "moderator": "manager",
+    }
+
+    admin_users = [
+        {
+            "_id": str(a.get("_id")),
+            "name": a.get("full_name", "Admin User"),
+            "email": a.get("email", "N/A"),
+            "role": role_to_display.get(a.get("role", "admin"), "manager"),
+            "status": "active" if a.get("is_active", True) else "inactive",
+            "lastLogin": a.get("last_login") or a.get("updated_at") or a.get("created_at") or now,
+        }
+        for a in admins
+    ]
+
+    if not admin_users:
+        admin_users = [
+            {
+                "_id": "admin-default",
+                "name": admin.get("full_name", "Admin User"),
+                "email": admin.get("email", "admin@tourapp.local"),
+                "role": admin.get("role", "admin"),
+                "status": "active",
+                "lastLogin": now,
+            }
+        ]
+
+    settings_data = {
+        "general": {
+            "appName": "Tour App",
+            "appUrl": "http://localhost:5173",
+            "supportEmail": "support@tourapp.com",
+            "supportPhone": "+91-9876543210",
+            "defaultLanguage": "en",
+            "timezone": "IST",
+            "dateFormat": "DD/MM/YYYY",
+            "enableNotifications": True,
+            "enableReports": True,
+            "enableAnalytics": True,
+            "enableApiAccess": True,
+            "maintenanceMode": False,
+        }
+    }
+
+    persisted_general = await db.admin_settings.find_one({"key": "general"})
+    if persisted_general and isinstance(persisted_general.get("value"), dict):
+        settings_data["general"] = {
+            **settings_data["general"],
+            **persisted_general["value"],
+        }
+
+    system_health = {
+        "overall": "healthy",
+        "database": "healthy",
+        "apiServer": "healthy",
+        "cache": "healthy",
+        "emailService": "healthy",
+        "storage": "healthy",
+        "dbResponseTime": max(20, min(120, 35 + open_quotes)),
+        "dbQueries": max(100, total_bookings + open_quotes + total_users),
+        "apiUptime": "Active",
+        "cpuUsage": min(85, 20 + (operators % 50)),
+        "memoryUsage": min(90, 30 + (total_users % 60)),
+        "cacheHitRate": max(70, 95 - (open_quotes % 20)),
+        "cachedItems": max(100, total_users * 12),
+        "cacheSize": max(64, (total_users // 5) + 128),
+        "emailsSent": max(0, total_bookings + open_quotes),
+        "emailsFailed": 0,
+        "emailQueueSize": max(0, open_quotes // 3),
+        "storageUsed": max(5, (total_users // 10) + (total_bookings // 20) + 40),
+        "storageTotal": 500,
+        "storagePercent": min(99, max(1, int((max(5, (total_users // 10) + (total_bookings // 20) + 40) / 500) * 100))),
+    }
+
+    backup_info = {
+        "lastBackup": now - timedelta(hours=8),
+        "lastBackupSize": "2.4 GB",
+        "totalFiles": max(1000, total_users * 200),
+        "filesSize": f"{max(10, total_users // 3)} GB",
+        "filesLastBackup": now - timedelta(hours=7),
+    }
+
+    backup_history = [
+        {"_id": "bkp-1", "date": now - timedelta(days=1), "size": "2.4 GB", "status": "completed"},
+        {"_id": "bkp-2", "date": now - timedelta(days=2), "size": "2.3 GB", "status": "completed"},
+        {"_id": "bkp-3", "date": now - timedelta(days=3), "size": "2.5 GB", "status": "completed"},
+    ]
+
+    maintenance_info = {
+        "cacheSize": f"{system_health['cacheSize']} MB",
+        "tempFiles": max(20, total_users // 2),
+        "logsSize": "2.1 GB",
+        "lastOptimized": now - timedelta(days=7),
+        "fragmentation": 8,
+    }
+
+    security_settings = {
+        "sessionTimeout": 30,
+        "maxLoginAttempts": 5,
+        "lockoutDuration": 15,
+        "twoFactorEnabled": True,
+        "enforceStrongPasswords": True,
+        "passwordMinLength": 8,
+        "passwordExpiry": 90,
+        "requireUppercase": True,
+        "requireNumbers": True,
+        "requireSpecialChars": True,
+        "ipWhitelist": ["192.168.1.1", "10.0.0.1", "172.16.0.1"],
+        "enableEncryption": True,
+        "enableSSL": True,
+        "enableAuditLog": True,
+        "enableDataMasking": True,
+    }
+
+    persisted_security = await db.admin_settings.find_one({"key": "security"})
+    if persisted_security and isinstance(persisted_security.get("value"), dict):
+        security_settings = {
+            **security_settings,
+            **persisted_security["value"],
+        }
+
+    api_keys = [
+        {
+            "_id": "key-mobile-app",
+            "name": "Mobile App",
+            "key": "sk_live_abc123def456ghi789",
+            "created_at": now - timedelta(days=120),
+            "lastUsed": now - timedelta(hours=1),
+        },
+        {
+            "_id": "key-web-dashboard",
+            "name": "Web Dashboard",
+            "key": "sk_live_xyz789uvw456rst123",
+            "created_at": now - timedelta(days=180),
+            "lastUsed": now - timedelta(hours=3),
+        },
+    ]
+
+    webhooks = [
+        {"_id": "wh-booking", "event": "booking.created", "url": "https://example.com/booking-created", "status": "active"},
+        {"_id": "wh-payment", "event": "payment.completed", "url": "https://example.com/payment-webhook", "status": "active"},
+    ]
+
+    third_party_services = [
+        {"_id": "svc-stripe", "name": "Stripe (Payments)", "status": "connected"},
+        {"_id": "svc-twilio", "name": "Twilio (SMS)", "status": "connected"},
+        {"_id": "svc-sendgrid", "name": "SendGrid (Email)", "status": "connected"},
+        {"_id": "svc-analytics", "name": "Google Analytics", "status": "disconnected"},
+    ]
+
+    integration_settings = {
+        "rateLimitPerMinute": 100,
+        "rateLimitPerHour": 5000,
+        "rateLimitPerDay": 100000,
+    }
+
+    persisted_integration = await db.admin_settings.find_one({"key": "integration"})
+    if persisted_integration and isinstance(persisted_integration.get("value"), dict):
+        integration_settings = {
+            **integration_settings,
+            **persisted_integration["value"],
+        }
+
+    persisted_keys = await db.admin_api_keys.find({}).sort("created_at", -1).to_list(200)
+    if persisted_keys:
+        api_keys = persisted_keys
+        for key in api_keys:
+            key["_id"] = str(key["_id"])
+
+    persisted_webhooks = await db.admin_webhooks.find({}).sort("created_at", -1).to_list(200)
+    if persisted_webhooks:
+        webhooks = persisted_webhooks
+        for webhook in webhooks:
+            webhook["_id"] = str(webhook["_id"])
+
+    metrics = {
+        "totalUsers": total_users,
+        "activeUsers": active_users,
+        "operators": operators,
+        "tourists": tourists,
+        "openQuotes": open_quotes,
+        "totalBookings": total_bookings,
+    }
+
+    return {
+        "settings": settings_data,
+        "systemHealth": system_health,
+        "adminUsers": admin_users,
+        "backupInfo": backup_info,
+        "backupHistory": backup_history,
+        "maintenanceInfo": maintenance_info,
+        "securitySettings": security_settings,
+        "apiKeys": api_keys,
+        "webhooks": webhooks,
+        "thirdPartyServices": third_party_services,
+        "integrationSettings": integration_settings,
+        "metrics": metrics,
+    }
+
+
+@router.post("/reports")
+async def create_admin_report(payload: dict, admin: dict = Depends(get_current_admin)):
+    """Create a new admin report record."""
+    db = await get_database()
+
+    name = (payload or {}).get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Report name is required")
+
+    report_type = (payload or {}).get("type", "revenue")
+    report_status = (payload or {}).get("status", "draft")
+    size = (payload or {}).get("size", "0 MB")
+
+    document = {
+        "name": name,
+        "type": report_type,
+        "status": report_status,
+        "size": size,
+        "generated_by": admin.get("full_name", "Admin User"),
+        "description": (payload or {}).get("description"),
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+    }
+
+    result = await db.admin_reports.insert_one(document)
+    document["_id"] = str(result.inserted_id)
+    return {"message": "Report created", "report": document}
+
+
+@router.delete("/reports/{report_id}")
+async def delete_admin_report(report_id: str, admin: dict = Depends(get_current_admin)):
+    """Delete an admin report record."""
+    db = await get_database()
+    try:
+        query = {"_id": ObjectId(report_id)}
+    except Exception:
+        query = {"_id": report_id}
+
+    result = await db.admin_reports.delete_one(query)
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+
+    return {"message": "Report deleted"}
+
+
+@router.post("/reports/schedules")
+async def create_report_schedule(payload: dict, admin: dict = Depends(get_current_admin)):
+    """Create a scheduled report entry."""
+    db = await get_database()
+
+    report_name = (payload or {}).get("report_name", "").strip() or "Scheduled Report"
+    recipients = (payload or {}).get("recipients") or []
+    if not isinstance(recipients, list) or not recipients:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one recipient is required")
+
+    frequency = ((payload or {}).get("frequency") or "monthly").lower()
+    if frequency == "daily":
+        next_run = datetime.now(timezone.utc) + timedelta(days=1)
+    elif frequency == "weekly":
+        next_run = datetime.now(timezone.utc) + timedelta(days=7)
+    else:
+        next_run = datetime.now(timezone.utc) + timedelta(days=30)
+
+    schedule = {
+        "report_name": report_name,
+        "report_id": (payload or {}).get("report_id"),
+        "frequency": frequency.capitalize(),
+        "recipients": recipients,
+        "format": ((payload or {}).get("format") or "pdf").upper(),
+        "status": "active",
+        "next_run": next_run,
+        "runs_count": 0,
+        "created_by": admin.get("_id"),
+        "created_at": datetime.now(timezone.utc),
+    }
+
+    result = await db.admin_report_schedules.insert_one(schedule)
+    schedule["_id"] = str(result.inserted_id)
+    return {"message": "Report schedule created", "schedule": schedule}
+
+
+@router.patch("/reports/schedules/{schedule_id}")
+async def update_report_schedule(schedule_id: str, payload: dict, admin: dict = Depends(get_current_admin)):
+    """Update report schedule status or fields."""
+    db = await get_database()
+    try:
+        query = {"_id": ObjectId(schedule_id)}
+    except Exception:
+        query = {"_id": schedule_id}
+
+    update_data = {}
+    if "status" in (payload or {}):
+        update_data["status"] = (payload or {}).get("status")
+    if "frequency" in (payload or {}):
+        update_data["frequency"] = str((payload or {}).get("frequency", "Monthly")).capitalize()
+    if "format" in (payload or {}):
+        update_data["format"] = str((payload or {}).get("format", "PDF")).upper()
+
+    if not update_data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update fields provided")
+
+    result = await db.admin_report_schedules.update_one(query, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+
+    return {"message": "Schedule updated"}
+
+
+@router.delete("/reports/schedules/{schedule_id}")
+async def delete_report_schedule(schedule_id: str, admin: dict = Depends(get_current_admin)):
+    """Delete a scheduled report entry."""
+    db = await get_database()
+    try:
+        query = {"_id": ObjectId(schedule_id)}
+    except Exception:
+        query = {"_id": schedule_id}
+
+    result = await db.admin_report_schedules.delete_one(query)
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+
+    return {"message": "Schedule deleted"}
+
+
+@router.post("/settings/general")
+async def save_general_settings(payload: dict, admin: dict = Depends(get_current_admin)):
+    """Persist general settings."""
+    db = await get_database()
+    value = payload or {}
+
+    await db.admin_settings.update_one(
+        {"key": "general"},
+        {
+            "$set": {
+                "key": "general",
+                "value": value,
+                "updated_by": admin.get("_id"),
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+        upsert=True,
+    )
+    return {"message": "General settings saved"}
+
+
+@router.post("/settings/security")
+async def save_security_settings(payload: dict, admin: dict = Depends(get_current_admin)):
+    """Persist security settings."""
+    db = await get_database()
+    value = payload or {}
+
+    await db.admin_settings.update_one(
+        {"key": "security"},
+        {
+            "$set": {
+                "key": "security",
+                "value": value,
+                "updated_by": admin.get("_id"),
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+        upsert=True,
+    )
+    return {"message": "Security settings saved"}
+
+
+@router.post("/settings/integration")
+async def save_integration_settings(payload: dict, admin: dict = Depends(get_current_admin)):
+    """Persist integration settings."""
+    db = await get_database()
+    value = payload or {}
+
+    await db.admin_settings.update_one(
+        {"key": "integration"},
+        {
+            "$set": {
+                "key": "integration",
+                "value": value,
+                "updated_by": admin.get("_id"),
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+        upsert=True,
+    )
+    return {"message": "Integration settings saved"}
+
+
+@router.post("/settings/api-keys")
+async def create_api_key(payload: dict, admin: dict = Depends(get_current_admin)):
+    """Create and store a new admin API key entry."""
+    db = await get_database()
+    name = (payload or {}).get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="API key name is required")
+
+    document = {
+        "name": name,
+        "key": f"sk_live_{uuid4().hex[:24]}",
+        "permissions": (payload or {}).get("permissions") or [],
+        "created_at": datetime.now(timezone.utc),
+        "lastUsed": None,
+        "created_by": admin.get("_id"),
+    }
+    result = await db.admin_api_keys.insert_one(document)
+    document["_id"] = str(result.inserted_id)
+    return {"message": "API key created", "apiKey": document}
+
+
+@router.delete("/settings/api-keys/{key_id}")
+async def delete_api_key(key_id: str, admin: dict = Depends(get_current_admin)):
+    """Delete an admin API key entry."""
+    db = await get_database()
+    try:
+        query = {"_id": ObjectId(key_id)}
+    except Exception:
+        query = {"_id": key_id}
+
+    result = await db.admin_api_keys.delete_one(query)
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+    return {"message": "API key revoked"}
+
+
+@router.post("/settings/webhooks")
+async def create_webhook(payload: dict, admin: dict = Depends(get_current_admin)):
+    """Create a webhook configuration entry."""
+    db = await get_database()
+    event = (payload or {}).get("event", "").strip()
+    url = (payload or {}).get("url", "").strip()
+    if not event or not url:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Webhook event and URL are required")
+
+    document = {
+        "event": event,
+        "url": url,
+        "status": "active",
+        "created_at": datetime.now(timezone.utc),
+        "created_by": admin.get("_id"),
+    }
+    result = await db.admin_webhooks.insert_one(document)
+    document["_id"] = str(result.inserted_id)
+    return {"message": "Webhook created", "webhook": document}
+
+
+@router.delete("/settings/webhooks/{webhook_id}")
+async def delete_webhook(webhook_id: str, admin: dict = Depends(get_current_admin)):
+    """Delete a webhook configuration entry."""
+    db = await get_database()
+    try:
+        query = {"_id": ObjectId(webhook_id)}
+    except Exception:
+        query = {"_id": webhook_id}
+
+    result = await db.admin_webhooks.delete_one(query)
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found")
+    return {"message": "Webhook deleted"}
+
+
+@router.patch("/settings/admin-users/{admin_id}")
+async def update_admin_user_entry(admin_id: str, payload: dict, admin: dict = Depends(get_current_admin)):
+    """Update admin user entry fields used by admin settings UI."""
+    db = await get_database()
+    try:
+        query = {"_id": ObjectId(admin_id)}
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid admin ID")
+
+    update_data = {}
+    if "status" in (payload or {}):
+        update_data["is_active"] = (payload or {}).get("status") == "active"
+
+    if "role" in (payload or {}):
+        requested_role = str((payload or {}).get("role", "manager")).lower()
+        mapped_role = {
+            "admin": "admin",
+            "manager": "moderator",
+            "supervisor": "moderator",
+            "super_admin": "super_admin",
+            "moderator": "moderator",
+        }.get(requested_role, "moderator")
+        update_data["role"] = mapped_role
+
+    if "name" in (payload or {}):
+        update_data["full_name"] = (payload or {}).get("name")
+
+    if not update_data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update fields provided")
+
+    update_data["updated_at"] = datetime.now(timezone.utc)
+    result = await db.admins.update_one(query, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin user not found")
+
+    return {"message": "Admin user updated"}

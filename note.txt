@@ -3,3 +3,22 @@ Log in with any seeded operator (password: Password123!):
 nina@wanderco.com
 carlos@coastliners.com
 miho@urbanloop.jp
+----------------------
+Operator login users:
+
+operator1@tourapp.local / Password123!
+operator2@tourapp.local / Password123!
+operator3@tourapp.local / Password123!
+Tourist users:
+
+tourist1@tourapp.local / Password123!
+tourist2@tourapp.local / Password123!
+Admin users:
+
+admin@tourapp.local / admin@123
+moderator@tourapp.local / moderator@123
+Seeded operator businesses/profiles:
+
+Local Demo Tours
+Himalayan Escape Co
+Coastal Trails Goa

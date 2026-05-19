@@ -5,6 +5,9 @@
       <p class="subtitle">Track payments, commissions, and payouts</p>
     </div>
 
+    <div v-if="loading" class="status-message">Loading financial data...</div>
+    <div v-else-if="loadError" class="error-message">{{ loadError }}</div>
+
     <!-- Tabs -->
     <div class="tabs">
       <button
@@ -778,9 +781,12 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import api from '../services/api'
 
 const activeTab = ref('dashboard')
+const loading = ref(false)
+const loadError = ref('')
 
 // Financial Data
 const financialData = ref({
@@ -1056,6 +1062,67 @@ const scheduleForm = ref({
   recipients: ''
 })
 
+const loadFinancialData = async () => {
+  loading.value = true
+  loadError.value = ''
+
+  try {
+    const token = localStorage.getItem('adminToken')
+    if (!token) {
+      loadError.value = 'Admin token not found. Please login again.'
+      return
+    }
+
+    const headers = { Authorization: `Bearer ${token}` }
+
+    const [overviewRes, transactionsRes, commissionsRes, payoutsRes, reportsRes] = await Promise.all([
+      api.get('/admin/financial/overview', { headers }),
+      api.get('/admin/financial/transactions', { headers }),
+      api.get('/admin/financial/commissions', { headers }),
+      api.get('/admin/financial/payouts', { headers }),
+      api.get('/admin/financial/reports', { headers })
+    ])
+
+    financialData.value = {
+      ...financialData.value,
+      ...(overviewRes.data || {})
+    }
+
+    if (Array.isArray(transactionsRes.data?.transactions)) {
+      transactions.value = transactionsRes.data.transactions
+    }
+
+    if (Array.isArray(commissionsRes.data?.commissions)) {
+      commissions.value = commissionsRes.data.commissions
+    }
+
+    if (Array.isArray(payoutsRes.data?.pending)) {
+      payouts.value = payoutsRes.data.pending
+    }
+
+    if (Array.isArray(payoutsRes.data?.history)) {
+      payoutHistory.value = payoutsRes.data.history
+    }
+
+    if (Array.isArray(reportsRes.data?.generated)) {
+      generatedReports.value = reportsRes.data.generated
+    }
+
+    if (Array.isArray(reportsRes.data?.scheduled)) {
+      scheduledExports.value = reportsRes.data.scheduled
+    }
+  } catch (error) {
+    console.error('Failed to load financial admin data:', error)
+    loadError.value = error.response?.data?.detail || 'Failed to load financial data'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  loadFinancialData()
+})
+
 // Methods
 const formatCurrency = (amount) => {
   return new Intl.NumberFormat('en-IN', {
@@ -1240,6 +1307,24 @@ const deleteScheduledExport = (scheduled) => {
   color: #718096;
   font-size: 1rem;
   margin: 0;
+}
+
+.status-message {
+  background: #ebf8ff;
+  color: #2b6cb0;
+  border: 1px solid #bee3f8;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.error-message {
+  background: #fff5f5;
+  color: #c53030;
+  border: 1px solid #fed7d7;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
 }
 
 /* Tabs */

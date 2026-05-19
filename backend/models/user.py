@@ -1,7 +1,27 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
 from bson import ObjectId
+from email_validator import EmailNotValidError, validate_email
+
+
+def validate_app_email(value: str) -> str:
+    """Accept normal emails and local-dev domains such as *.local."""
+    email = value.strip().lower()
+    if "@" not in email:
+        raise ValueError("Email must contain @")
+
+    local_part, domain = email.rsplit("@", 1)
+    if not local_part or not domain:
+        raise ValueError("Invalid email address")
+
+    if domain.endswith(".local"):
+        return email
+
+    try:
+        return validate_email(email, check_deliverability=False).normalized
+    except EmailNotValidError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 class PyObjectId(ObjectId):
@@ -56,8 +76,13 @@ class User(UserBase):
 
 
 class UserLogin(BaseModel):
-    email: EmailStr
+    email: str
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_field(cls, value: str) -> str:
+        return validate_app_email(value)
 
 
 class Token(BaseModel):
@@ -70,17 +95,32 @@ class TokenData(BaseModel):
 
 class ForgotPasswordRequest(BaseModel):
     """Request to initiate forgot password flow"""
-    email: EmailStr
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_field(cls, value: str) -> str:
+        return validate_app_email(value)
 
 
 class VerifyOTPRequest(BaseModel):
     """Verify OTP for password reset"""
-    email: EmailStr
+    email: str
     otp: str
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_field(cls, value: str) -> str:
+        return validate_app_email(value)
 
 
 class ResetPasswordRequest(BaseModel):
     """Reset password with OTP"""
-    email: EmailStr
+    email: str
     otp: str
     new_password: str = Field(..., min_length=8, description="Must be at least 8 characters")
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_field(cls, value: str) -> str:
+        return validate_app_email(value)

@@ -153,9 +153,23 @@ Complete documentation for the Tour App Admin Dashboard implementation. This ind
 
 ---
 
+### 9. [TO_IMPLEMENTATION.md](TO_IMPLEMENTATION.md) ✨ NEW
+**Best for:** Future implementation tracking and execution priorities  
+**Length:** Medium  
+**Contents:**
+- Remaining implementation backlog (P0/P1/P2)
+- Operational job endpoints to build next
+- Audit trail and financial normalization tasks
+- API quality/testing/security/observability checklist
+- Proposed data model additions
+
+**When to use:** Sprint planning and next-phase execution
+
+---
+
 ## 🔧 Technical Reference
 
-### 9. [FINAL_DELIVERY_SUMMARY.md](FINAL_DELIVERY_SUMMARY.md)
+### 10. [FINAL_DELIVERY_SUMMARY.md](FINAL_DELIVERY_SUMMARY.md)
 **Best for:** Complete project overview  
 **Length:** Comprehensive  
 **Contents:**

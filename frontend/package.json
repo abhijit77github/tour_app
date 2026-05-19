@@ -8,12 +8,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "vue": "^3.4.15",
-    "vue-router": "^4.2.5",
-    "pinia": "^2.1.7",
     "axios": "^1.6.5",
     "leaflet": "^1.9.4",
-    "vue-leaflet": "^0.1.0"
+    "pinia": "^2.1.7",
+    "uuid": "^14.0.0",
+    "vue": "^3.4.15",
+    "vue-leaflet": "^0.1.0",
+    "vue-router": "^4.2.5"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.3",

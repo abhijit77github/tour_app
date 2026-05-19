@@ -114,6 +114,12 @@ const routes = [
     meta: { requiresAuth: true, userType: 'tourist' }
   },
   {
+    path: '/plan',
+    name: 'TourPlanner',
+    component: () => import('../views/TourPlanner.vue'),
+    meta: { requiresAuth: true, userType: 'tourist' }
+  },
+  {
     path: '/booking/:id',
     name: 'BookingDetails',
     component: BookingDetails,
@@ -127,6 +133,7 @@ const routes = [
   {
     path: '/admin',
     component: AdminLayout,
+    redirect: '/admin/dashboard',
     meta: { requiresAdmin: true },
     children: [
       {

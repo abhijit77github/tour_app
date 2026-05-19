@@ -1,0 +1,123 @@
+name: tour-app-dev
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: tour-app-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  init-seed:
+    image: python:3.11-slim
+    container_name: tour-app-init-seed
+    restart: "no"
+    init: true
+    working_dir: /app
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PATH: "/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      MONGODB_URL: "mongodb://mongo:27017"
+      DATABASE_NAME: "tour_app_db"
+      PYTHONPATH: "/app"
+    command: >
+      sh -c "if [ ! -x /opt/venv/bin/python ]; then python -m venv /opt/venv; fi &&
+             . /opt/venv/bin/activate &&
+             if [ ! -f /opt/venv/requirements.lock ] || ! cmp -s /app/requirements.txt /opt/venv/requirements.lock; then
+               pip install --no-cache-dir -r /app/requirements.txt &&
+               cp /app/requirements.txt /opt/venv/requirements.lock;
+             fi &&
+             python -m backend.scripts.seed_local_dev"
+    volumes:
+      - ./backend:/app/backend
+      - ./requirements.txt:/app/requirements.txt:ro
+      - backend_venv:/opt/venv
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  backend:
+    image: python:3.11-slim
+    container_name: tour-app-backend-dev
+    restart: unless-stopped
+    init: true
+    working_dir: /app
+    env_file:
+      - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PATH: "/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      DEBUG: "true"
+      HOST: "0.0.0.0"
+      PORT: "8808"
+      FRONTEND_URL: "http://localhost:5173"
+      MONGODB_URL: "mongodb://mongo:27017"
+      DATABASE_NAME: "tour_app_db"
+      PYTHONPATH: "/app"
+    command: >
+      sh -c "if [ ! -x /opt/venv/bin/python ]; then python -m venv /opt/venv; fi &&
+             . /opt/venv/bin/activate &&
+             if [ ! -f /opt/venv/requirements.lock ] || ! cmp -s /app/requirements.txt /opt/venv/requirements.lock; then
+               pip install --no-cache-dir -r /app/requirements.txt &&
+               cp /app/requirements.txt /opt/venv/requirements.lock;
+             fi &&
+             uvicorn backend.main:app --host 0.0.0.0 --port 8808 --reload"
+    volumes:
+      - ./backend:/app/backend
+      - ./requirements.txt:/app/requirements.txt:ro
+      - backend_venv:/opt/venv
+    ports:
+      - "8808:8808"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8808/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    depends_on:
+      mongo:
+        condition: service_healthy
+      init-seed:
+        condition: service_completed_successfully
+
+  frontend:
+    image: node:18-alpine
+    container_name: tour-app-frontend-dev
+    restart: unless-stopped
+    init: true
+    working_dir: /app
+    environment:
+      VITE_API_URL: "http://localhost:8808"
+      CHOKIDAR_USEPOLLING: "true"
+    command: >
+      sh -c "if [ -f package-lock.json ]; then
+               if [ ! -f node_modules/.package-lock.hash ] || ! cmp -s package-lock.json node_modules/.package-lock.hash; then
+                 npm install && cp package-lock.json node_modules/.package-lock.hash;
+               fi;
+             else
+               npm install;
+             fi &&
+             npm run dev -- --host 0.0.0.0 --port 5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  mongo_data:
+  frontend_node_modules:
+  backend_venv:
