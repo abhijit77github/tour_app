@@ -31,6 +31,34 @@ export const useAuthStore = defineStore('auth', {
       }
     },
 
+    async verifyRegistrationOtp(payload) {
+      this.loading = true
+      this.error = null
+      try {
+        const response = await api.post('/auth/verify-registration-otp', payload)
+        return response.data
+      } catch (error) {
+        this.error = error.response?.data?.detail || 'OTP verification failed'
+        throw error
+      } finally {
+        this.loading = false
+      }
+    },
+
+    async resendRegistrationOtp(email) {
+      this.loading = true
+      this.error = null
+      try {
+        const response = await api.post('/auth/resend-registration-otp', { email })
+        return response.data
+      } catch (error) {
+        this.error = error.response?.data?.detail || 'Failed to resend OTP'
+        throw error
+      } finally {
+        this.loading = false
+      }
+    },
+
     async login(credentials) {
       this.loading = true
       this.error = null

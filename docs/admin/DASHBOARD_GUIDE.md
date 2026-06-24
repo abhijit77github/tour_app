@@ -205,11 +205,11 @@ GET    /admin/operators/{id}/performance - Individual operator analytics
 ```
 
 ### Admin User Seeding
-A script creates initial admin users:
-- **Super Admin**: `admin@tourapp.com` / `admin@123`
-- **Moderator**: `moderator@tourapp.com` / `moderator@123`
+Local development seeds initial admin users into `tour_app_db` via `backend.scripts.seed_local_dev`.
+The same accounts can be recreated from the host machine with `python -m backend.scripts.create_admin`.
 
-Run: `python backend/scripts/create_admin.py`
+- **Super Admin**: `admin@tourapp.local` / `admin@123`
+- **Moderator**: `moderator@tourapp.local` / `moderator@123`
 
 ## Frontend Architecture
 
@@ -273,14 +273,14 @@ src/
 
 ### 1. Create Admin User
 ```bash
-cd backend
-python scripts/create_admin.py
+cd /path/to/tour_app
+python -m backend.scripts.create_admin
 ```
 
 ### 2. Access Admin Dashboard
 ```
 URL: http://localhost:5173/admin/login
-Email: admin@tourapp.com
+Email: admin@tourapp.local
 Password: admin@123
 ```
 
@@ -338,11 +338,11 @@ Password: admin@123
 ### Test Accounts
 ```
 Admin Login:
-- Email: admin@tourapp.com
+- Email: admin@tourapp.local
 - Password: admin@123
 
 Moderator Login:
-- Email: moderator@tourapp.com
+- Email: moderator@tourapp.local
 - Password: moderator@123
 ```
 

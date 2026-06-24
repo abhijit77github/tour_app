@@ -49,7 +49,7 @@
 </template>
 
 <script>
-import { ref } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
@@ -58,6 +58,7 @@ export default {
   setup() {
     const router = useRouter()
     const authStore = useAuthStore()
+    const currentUser = computed(() => authStore.user)
 
     const form = ref({
       email: '',
@@ -66,6 +67,24 @@ export default {
 
     const loading = ref(false)
     const error = ref(null)
+
+    const redirectAuthenticatedUser = () => {
+      if (authStore.isOperator) {
+        router.replace('/operator/home')
+      } else if (authStore.isTourist) {
+        router.replace('/tourist/home')
+      }
+    }
+
+    if (currentUser.value) {
+      redirectAuthenticatedUser()
+    }
+
+    watch(currentUser, (user) => {
+      if (user) {
+        redirectAuthenticatedUser()
+      }
+    })
 
     const handleLogin = async () => {
       loading.value = true

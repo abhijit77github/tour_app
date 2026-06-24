@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="520" height="160" viewBox="0 0 520 160" role="img" aria-label="Tour Local logo compact">
+  <defs>
+    <linearGradient id="pinFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#12b7a1" />
+      <stop offset="100%" stop-color="#0f766e" />
+    </linearGradient>
+    <linearGradient id="sunFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffd36a" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(18 14)">
+    <path d="M72 0c34 0 60 26 60 59 0 25-15 45-35 65L72 150 47 124C27 104 12 84 12 59 12 26 38 0 72 0z" fill="url(#pinFill)"/>
+    <path d="M72 20c22 0 39 17 39 38 0 19-13 35-32 53L72 119l-7-8c-19-18-32-34-32-53 0-21 17-38 39-38z" fill="#f8fafc"/>
+    <circle cx="57" cy="49" r="11" fill="url(#sunFill)"/>
+    <path d="M38 84c12-14 26-21 42-21 16 0 30 6 43 18v9H38z" fill="#68d391"/>
+    <path d="M36 96c13-8 28-12 45-12 21 0 39 4 55 0-13 10-30 15-52 15-18 0-34-1-48-3z" fill="#38bdf8"/>
+    <path d="M49 102c12 7 21 16 29 29l9-10c13-15 30-25 52-29-16 8-29 17-40 29l-13 14c-7-12-17-23-37-33z" fill="#0f5fb5" opacity="0.9"/>
+  </g>
+
+  <g transform="translate(170 86)">
+    <text x="0" y="0" font-family="Manrope, Arial, sans-serif" font-size="56" font-weight="800" letter-spacing="-2.4" fill="#0f172a">Tour</text>
+    <text x="120" y="0" font-family="Manrope, Arial, sans-serif" font-size="56" font-weight="800" letter-spacing="-2.4" fill="#0f766e">Local</text>
+  </g>
+</svg>

@@ -27,13 +27,20 @@
         <div class="map-section card">
           <div class="section-head">
             <h2>Map Preview</h2>
-            <span class="muted">Visual check before booking</span>
+            <span class="muted">{{ mappableCount }} mappable location(s)</span>
           </div>
           <MapView 
+            v-if="mappableCount > 0"
             :locations="cartStore.cartLocations"
             :zoom="10"
             height="400px"
           />
+          <div v-else class="map-empty-state">
+            <h3>No coordinates available yet</h3>
+            <p>
+              Current cart items do not include map coordinates. Add locations from operator search or re-add planner suggestions after refreshing recommendations.
+            </p>
+          </div>
         </div>
 
         <div v-for="(operatorGroup, operatorId) in cartByOperator" :key="operatorId" class="operator-group card">
@@ -76,8 +83,19 @@
                   </div>
 
                   <div class="item-details">
+                    <div class="item-topline">
+                      <span class="service-chip" :class="item.service_type === 'car' ? 'service-car' : 'service-tour'">
+                        {{ item.service_type === 'car' ? 'Car Service' : 'Tour Service' }}
+                      </span>
+                    </div>
                     <h4>{{ item.sub_location_name }}</h4>
                     <p>{{ item.description }}</p>
+                    <div v-if="item.service_type === 'car'" class="car-meta">
+                      <span v-if="item.vehicle_type">{{ item.vehicle_type }}</span>
+                      <span v-if="item.seats">{{ item.seats }} seats</span>
+                      <span v-if="item.pricing_model">{{ item.pricing_model }}</span>
+                      <span v-if="item.base_fare">From ${{ item.base_fare }}</span>
+                    </div>
                     <div v-if="item.coordinates" class="coordinates">
                       📍 {{ item.coordinates.latitude.toFixed(4) }}, {{ item.coordinates.longitude.toFixed(4) }}
                     </div>
@@ -122,8 +140,9 @@ import MapView from '../components/MapView.vue';
 
 const cartStore = useCartStore();
 
-onMounted(() => {
+onMounted(async () => {
   cartStore.initCart();
+  await cartStore.rehydrateMissingCoordinates();
 });
 
 const cartByOperator = computed(() => {
@@ -159,6 +178,7 @@ const cartByOperator = computed(() => {
 });
 
 const operatorCount = computed(() => Object.keys(cartByOperator.value).length);
+const mappableCount = computed(() => cartStore.cartLocations.length);
 
 const selectedCount = computed(() => {
   return cartStore.cartItems.filter(item => item.selected).length;
@@ -171,7 +191,8 @@ const selectedItemsForOperator = (operatorId) => {
 const getItemIndex = (item) => {
   return cartStore.cartItems.findIndex(
     i => i.operator_id === item.operator_id && 
-        i.sub_location_name === item.sub_location_name
+        i.sub_location_name === item.sub_location_name &&
+        (i.service_type || 'tour') === (item.service_type || 'tour')
   );
 };
 
@@ -283,6 +304,27 @@ h1 {
 
 .map-section {
   padding-bottom: 12px;
+}
+
+.map-empty-state {
+  padding: 28px 18px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
+  text-align: center;
+}
+
+.map-empty-state h3 {
+  margin: 0 0 8px;
+  color: #0f172a;
+  font-size: 1rem;
+}
+
+.map-empty-state p {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.9rem;
+  line-height: 1.55;
 }
 
 .operator-group {
@@ -419,6 +461,30 @@ h1 {
   min-width: 0;
 }
 
+.item-topline {
+  margin-bottom: 6px;
+}
+
+.service-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.18rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.service-tour {
+  background: rgba(14, 165, 233, 0.14);
+  color: #0369a1;
+}
+
+.service-car {
+  background: rgba(124, 58, 237, 0.14);
+  color: #6d28d9;
+}
+
 .item-details h4 {
   margin: 0 0 8px;
   color: #0f172a;
@@ -435,6 +501,23 @@ h1 {
 .coordinates {
   font-size: 0.78rem;
   color: #64748b;
+}
+
+.car-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 6px;
+}
+
+.car-meta span {
+  background: rgba(226, 232, 240, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 999px;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.72rem;
+  color: #334155;
+  font-weight: 700;
 }
 
 .item-actions {

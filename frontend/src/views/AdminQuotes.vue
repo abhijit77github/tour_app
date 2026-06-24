@@ -19,13 +19,13 @@
       </div>
 
       <div class="filter-controls">
-        <select v-model="statusFilter" class="filter-select">
+          <select v-model="statusFilter" @change="handleFilterChange" class="filter-select">
           <option value="">All Status</option>
           <option value="open">📂 Open</option>
           <option value="closed">✓ Closed</option>
         </select>
 
-        <select v-model="responseFilter" class="filter-select">
+          <select v-model="responseFilter" @change="handleFilterChange" class="filter-select">
           <option value="">All Responses</option>
           <option value="0">0 Responses</option>
           <option value="1plus">1+ Responses</option>
@@ -34,7 +34,7 @@
       </div>
 
       <div class="pagination-info">
-        Showing {{ currentPage * pageSize - pageSize + 1 }} to {{ Math.min(currentPage * pageSize, totalQuotes) }} of {{ totalQuotes }}
+          Showing {{ pageStart }} to {{ pageEnd }} of {{ totalQuotes }}
       </div>
     </div>
 
@@ -45,7 +45,7 @@
     </div>
 
     <!-- Empty State -->
-    <div v-else-if="filteredQuotes.length === 0" class="empty-state">
+    <div v-else-if="quotes.length === 0" class="empty-state">
       <p>📭 No quotes found</p>
       <span v-if="searchQuery" class="hint">Try adjusting your search criteria</span>
     </div>
@@ -67,7 +67,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="quote in paginatedQuotes" :key="quote._id" class="quote-row">
+          <tr v-for="quote in quotes" :key="quote._id" class="quote-row">
             <td class="quote-id-cell">{{ quote._id.slice(-8) }}</td>
             <td class="tourist-cell">{{ quote.tourist_name }}</td>
             <td class="destination-cell">
@@ -128,26 +128,19 @@
     <div v-if="totalQuotes > 0" class="pagination">
       <button
         @click="previousPage"
-        :disabled="currentPage === 1"
+        :disabled="currentPage === 1 || loading"
         class="pagination-btn"
       >
         ← Previous
       </button>
 
       <div class="page-numbers">
-        <button
-          v-for="page in visiblePages"
-          :key="page"
-          @click="goToPage(page)"
-          :class="['page-number', { active: currentPage === page }]"
-        >
-          {{ page }}
-        </button>
+        <span :class="['page-number', 'active']">{{ currentPage }}</span>
       </div>
 
       <button
         @click="nextPage"
-        :disabled="currentPage >= totalPages"
+        :disabled="!pagination.hasMore || loading"
         class="pagination-btn"
       >
         Next →
@@ -321,6 +314,9 @@ const statusFilter = ref('')
 const responseFilter = ref('')
 const currentPage = ref(1)
 const pageSize = 10
+const totalQuotes = ref(0)
+const pagination = ref({ totalPages: 1, hasMore: false })
+const pageCursors = ref([null])
 const selectedQuote = ref(null)
 const showModal = ref(false)
 const showResponsesModal = ref(false)
@@ -331,60 +327,9 @@ const confirmButtonText = ref('')
 const confirmDanger = ref(false)
 let confirmCallback = null
 
-const totalQuotes = computed(() => quotes.value.length)
-const totalPages = computed(() => Math.ceil(filteredQuotes.value.length / pageSize))
-
-const filteredQuotes = computed(() => {
-  let filtered = quotes.value
-
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    filtered = filtered.filter(q =>
-      q.tourist_name.toLowerCase().includes(query) ||
-      (q.from_location || '').toLowerCase().includes(query) ||
-      (q.to_location || '').toLowerCase().includes(query) ||
-      q.tourist_email.toLowerCase().includes(query)
-    )
-  }
-
-  if (statusFilter.value) {
-    filtered = filtered.filter(q =>
-      statusFilter.value === 'open' ? !q.is_closed : q.is_closed
-    )
-  }
-
-  if (responseFilter.value === '0') {
-    filtered = filtered.filter(q => (q.total_responses || 0) === 0)
-  } else if (responseFilter.value === '1plus') {
-    filtered = filtered.filter(q => (q.total_responses || 0) >= 1)
-  } else if (responseFilter.value === '5plus') {
-    filtered = filtered.filter(q => (q.total_responses || 0) >= 5)
-  }
-
-  return filtered
-})
-
-const paginatedQuotes = computed(() => {
-  const start = (currentPage.value - 1) * pageSize
-  const end = start + pageSize
-  return filteredQuotes.value.slice(start, end)
-})
-
-const visiblePages = computed(() => {
-  const pages = []
-  const maxPages = 5
-  let startPage = Math.max(1, currentPage.value - Math.floor(maxPages / 2))
-  let endPage = Math.min(totalPages.value, startPage + maxPages - 1)
-
-  if (endPage - startPage + 1 < maxPages) {
-    startPage = Math.max(1, endPage - maxPages + 1)
-  }
-
-  for (let i = startPage; i <= endPage; i++) {
-    pages.push(i)
-  }
-  return pages
-})
+const totalPages = computed(() => Math.max(1, Math.ceil(totalQuotes.value / pageSize)))
+const pageStart = computed(() => (totalQuotes.value === 0 ? 0 : (currentPage.value - 1) * pageSize + 1))
+const pageEnd = computed(() => (totalQuotes.value === 0 ? 0 : Math.min(currentPage.value * pageSize, totalQuotes.value)))
 
 const formatBudget = (value) => {
   return new Intl.NumberFormat('en-IN').format(value || 0)
@@ -399,10 +344,29 @@ const fetchQuotes = async () => {
   try {
     loading.value = true
     const token = localStorage.getItem('adminToken')
-    const response = await api.get('/admin/quotes?skip=0&limit=1000', {
+    const currentCursor = pageCursors.value[currentPage.value - 1]
+    const response = await api.get('/admin/quotes', {
+      params: {
+        limit: pageSize,
+        cursor: currentCursor || undefined,
+        search: searchQuery.value.trim(),
+        status_filter: statusFilter.value || undefined,
+        response_filter: responseFilter.value || undefined
+      },
       headers: { Authorization: `Bearer ${token}` }
     })
     quotes.value = response.data.quotes || []
+    totalQuotes.value = response.data.pagination?.total_items || 0
+    pagination.value = {
+      totalPages: response.data.pagination?.total_pages || 1,
+      hasMore: Boolean(response.data.pagination?.has_more)
+    }
+    if (pageCursors.value.length === currentPage.value) {
+      pageCursors.value.push(response.data.pagination?.next_cursor || null)
+    } else {
+      pageCursors.value[currentPage.value] = response.data.pagination?.next_cursor || null
+    }
+    pageCursors.value = pageCursors.value.slice(0, currentPage.value + 1)
   } catch (error) {
     console.error('Error fetching quotes:', error)
   } finally {
@@ -410,8 +374,19 @@ const fetchQuotes = async () => {
   }
 }
 
-const handleSearch = () => {
+const resetPagination = () => {
   currentPage.value = 1
+  pageCursors.value = [null]
+}
+
+const handleSearch = () => {
+  resetPagination()
+  fetchQuotes()
+}
+
+const handleFilterChange = () => {
+  resetPagination()
+  fetchQuotes()
 }
 
 const viewQuote = (quote) => {
@@ -462,10 +437,11 @@ const deleteQuote = (quote) => {
       await api.delete(`/admin/quotes/${quote._id}`, {
         headers: { Authorization: `Bearer ${token}` }
       })
-      const index = quotes.value.findIndex(q => q._id === quote._id)
-      if (index > -1) {
-        quotes.value.splice(index, 1)
+        if (quotes.value.length === 1 && currentPage.value > 1) {
+          currentPage.value -= 1
+        pageCursors.value = pageCursors.value.slice(0, currentPage.value + 1)
       }
+        await fetchQuotes()
       showConfirmDialog.value = false
     } catch (error) {
       console.error('Error deleting quote:', error)
@@ -496,15 +472,17 @@ const closeResponsesModal = () => {
 }
 
 const previousPage = () => {
-  if (currentPage.value > 1) currentPage.value--
+  if (currentPage.value > 1) {
+    currentPage.value--
+    fetchQuotes()
+  }
 }
 
 const nextPage = () => {
-  if (currentPage.value < totalPages.value) currentPage.value++
-}
-
-const goToPage = (page) => {
-  currentPage.value = page
+  if (pagination.value.hasMore) {
+    currentPage.value++
+    fetchQuotes()
+  }
 }
 
 onMounted(() => {

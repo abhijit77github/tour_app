@@ -20,14 +20,14 @@ Use the **Quick Links** section below to jump directly to what you need.
 
 ## 🗂️ Documentation Organization
 
-All project documentation has been organized into **5 main categories** with **25 files total**:
+All project documentation has been organized into **5 main categories** with **27 files total**:
 
 ```
 📚 /docs
 ├── 📋 /project       (7 files) - Project overview & status
 ├── 📊 /phases        (6 files) - Phase 1, 2, 3 documentation  
 ├── 👥 /admin         (5 files) - Admin dashboard guides
-├── 🛠️ /guides        (5 files) - Technical guides & setup
+├── 🛠️ /guides        (7 files) - Technical guides & setup
 ├── 🚀 /deployment    (1 file)  - Infrastructure & deployment
 ├── README.md         - Master documentation hub
 └── FOLDER_STRUCTURE.md - This folder's detailed guide
@@ -135,6 +135,7 @@ Essential project overview and current status.
 | [README.md](docs/project/README.md) | Tech stack & project structure | 500+ lines | Project overview |
 | [INDEX.md](docs/project/INDEX.md) | Documentation index | 500+ lines | Finding docs |
 | [CURRENT_STATUS.md](docs/project/CURRENT_STATUS.md) | Progress & metrics | 400+ lines | Status checks |
+| [MONGODB_SCALING_HARDENING.md](docs/project/MONGODB_SCALING_HARDENING.md) | MongoDB scale assessment & hardening plan | Operational reference | Backend, platform |
 | [IMPLEMENTATION_SUMMARY.md](docs/project/IMPLEMENTATION_SUMMARY.md) | Technical architecture | 600+ lines | Developers |
 | [FINAL_DELIVERY_SUMMARY.md](docs/project/FINAL_DELIVERY_SUMMARY.md) | Complete delivery report | 500+ lines | Stakeholders |
 | [SESSION_SUMMARY.md](docs/project/SESSION_SUMMARY.md) | Development notes | 400+ lines | Team leads |
@@ -171,7 +172,7 @@ Complete admin dashboard documentation.
 
 ---
 
-### 🛠️ GUIDES Folder (5 files)
+### 🛠️ GUIDES Folder (7 files)
 Technical guides and implementation references.
 
 | File | Purpose | Best For |
@@ -181,6 +182,8 @@ Technical guides and implementation references.
 | [TESTING_GUIDE.md](docs/guides/TESTING_GUIDE.md) | Testing procedures | QA testing |
 | [CHAT_IMPLEMENTATION.md](docs/guides/CHAT_IMPLEMENTATION.md) | Chat system | Messaging features |
 | [LANDING_PAGE.md](docs/guides/LANDING_PAGE.md) | Frontend components | UI/UX development |
+| [OPERATOR_PLAN_PAYMENT_INTEGRATION.md](docs/guides/OPERATOR_PLAN_PAYMENT_INTEGRATION.md) | Operator plan order lifecycle, settlement flow, and future gateway integration contract | Backend, operator billing, payments |
+| [NOTIFICATION_SYSTEM_IMPLEMENTATION.md](docs/guides/NOTIFICATION_SYSTEM_IMPLEMENTATION.md) | Notification architecture, phased roadmap, and extraction plan | Backend, admin UI, platform teams |
 
 ---
 

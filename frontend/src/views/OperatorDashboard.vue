@@ -3,6 +3,54 @@
     <div class="container">
       <h1>Operator Dashboard</h1>
 
+      <section v-if="canReadBilling" class="billing-summary-card">
+        <div class="billing-summary-head">
+          <div>
+            <p class="billing-kicker">Billing pulse</p>
+            <h2>Recent credit movement</h2>
+          </div>
+          <router-link to="/operator/billing-analytics" class="billing-link">Open full analytics</router-link>
+        </div>
+
+        <div class="billing-summary-grid">
+          <article class="billing-metric">
+            <span>Credits remaining</span>
+            <strong>{{ billingCurrentCredits }}</strong>
+            <p>{{ billingCurrentPlan }}</p>
+          </article>
+          <article class="billing-metric">
+            <span>7 day spend</span>
+            <strong>₹{{ formatBillingMoney(billingTotals.spend_amount) }}</strong>
+            <p>{{ billingTotals.billable_events }} billable events</p>
+          </article>
+          <article class="billing-metric">
+            <span>Credits used</span>
+            <strong>{{ billingTotals.credits_consumed }}</strong>
+            <p>{{ billingTotals.non_billable_events }} tracked non-billable</p>
+          </article>
+        </div>
+
+        <div class="billing-mini-row">
+          <div v-if="billingMiniBars.length" class="billing-mini-chart" aria-label="Compact billing spend chart">
+            <div v-for="point in billingMiniBars" :key="point.date" class="billing-mini-bar-wrap">
+              <div class="billing-mini-bar-track">
+                <div class="billing-mini-bar-fill" :style="{ height: `${point.height}%` }"></div>
+              </div>
+              <span>{{ point.label }}</span>
+            </div>
+          </div>
+          <div v-else class="billing-empty">No recent billable spend yet.</div>
+
+          <div class="billing-surfaces">
+            <article v-for="row in billingTopSurfaces" :key="row.surface" class="billing-surface-chip">
+              <strong>{{ humanizeBilling(row.surface) }}</strong>
+              <span>₹{{ formatBillingMoney(row.spend_amount) }} · {{ row.credits_consumed }} credits</span>
+            </article>
+            <div v-if="!billingTopSurfaces.length" class="billing-empty compact">No billing surface data yet.</div>
+          </div>
+        </div>
+      </section>
+
       <!-- Navigation Tabs -->
       <div class="dashboard-tabs">
         <button
@@ -52,7 +100,7 @@
                 <p>⭐ {{ profile.average_rating.toFixed(1) }} ({{ profile.total_reviews }} reviews)</p>
               </div>
             </div>
-            <button type="button" @click="editingProfile = true" class="btn btn-primary">Edit Profile</button>
+            <button v-if="canUpdateProfile" type="button" @click="editingProfile = true" class="btn btn-primary">Edit Profile</button>
           </div>
 
           <form v-else @submit.prevent="updateProfile" class="profile-form">
@@ -248,6 +296,7 @@
       <section v-if="activeTab === 'Quote Requests'" class="tab-content">
         <div class="card">
           <h2>Quote Requests</h2>
+          <p class="muted section-intro">Use this tab to preview incoming demand, then open the request in the main inbox to respond.</p>
 
           <div v-if="quoteLoading" class="loading-container">
             <p>Loading quote requests...</p>
@@ -259,10 +308,10 @@
             <div v-for="quote in quoteRequests" :key="quote._id" class="quote-card">
               <div class="quote-header">
                 <div>
-                  <h3>{{ quote.locations.length }} location(s)</h3>
-                  <p class="muted">{{ new Date(quote.created_at).toLocaleString() }}</p>
+                  <h3>{{ quote.tourist_name }}</h3>
+                  <p class="muted">{{ formatQuoteAge(quote.created_at) }}</p>
                 </div>
-                <span class="status-badge">{{ quote.status }}</span>
+                <span :class="['status-badge', getQuoteStatusClass(quote)]">{{ getQuoteStatusLabel(quote) }}</span>
               </div>
 
               <div class="quote-body">
@@ -281,52 +330,37 @@
                 </ul>
 
                 <div class="quote-meta">
-                  <p v-if="quote.travel_window"><strong>Travel window:</strong> {{ quote.travel_window }}</p>
-                  <p v-if="quote.travelers"><strong>Travelers:</strong> {{ quote.travelers }}</p>
-                  <p v-if="quote.budget"><strong>Budget:</strong> ${{ quote.budget }}</p>
+                  <p v-if="quote.travel_window"><strong>Travel window:</strong> {{ formatQuoteTravelWindow(quote.travel_window) }}</p>
+                  <p v-if="quote.travelers"><strong>Travelers:</strong> {{ formatQuoteTravelers(quote.travelers) }}</p>
+                  <p v-if="quote.budget"><strong>Budget:</strong> {{ formatQuoteBudget(quote.budget) }}</p>
                   <p v-if="quote.notes"><strong>Notes:</strong> {{ quote.notes }}</p>
                 </div>
 
                 <div v-if="quote.responses && quote.responses.length" class="responses">
                   <h4>Responses</h4>
                   <div v-for="(resp, ridx) in quote.responses" :key="ridx" class="response-item">
-                    <p><strong>{{ resp.operator_name || 'Operator' }}</strong> quoted <span v-if="resp.amount">${{ resp.amount }}</span></p>
+                    <p><strong>{{ resp.operator_name || 'Operator' }}</strong> quoted <span v-if="resp.amount">{{ formatQuoteBudget(resp.amount) }}</span></p>
                     <p class="muted">{{ resp.message || 'No message' }}</p>
-                    <p class="muted">{{ new Date(resp.created_at).toLocaleString() }}</p>
+                    <p class="muted">{{ formatQuoteAge(resp.created_at) }}</p>
                   </div>
                 </div>
 
                 <div class="quote-actions">
+                  <button class="btn btn-primary btn-sm" @click="openQuoteInInbox(quote._id)">Open in inbox</button>
                   <button class="btn btn-secondary btn-sm" @click="startQuoteChat(quote)">Chat with tourist</button>
                 </div>
 
-                <div v-if="!quote.responded_by_me" class="response-form">
-                  <h4>Send your quote</h4>
-                  <div class="form-row">
-                    <input
-                      v-model.number="ensureResponseForm(quote._id).amount"
-                      type="number"
-                      min="0"
-                      step="50"
-                      placeholder="Amount"
-                    />
-                    <input
-                      v-model="ensureResponseForm(quote._id).message"
-                      type="text"
-                      placeholder="Message to tourist"
-                    />
-                    <button
-                      class="btn btn-primary"
-                      :disabled="responding[quote._id]"
-                      @click="submitQuoteResponse(quote._id)"
-                    >
-                      {{ responding[quote._id] ? 'Sending...' : 'Respond' }}
-                    </button>
-                  </div>
-                </div>
-
-                <div v-else class="muted">You already responded to this request.</div>
+                <div class="muted">{{ quote.responded_by_me ? 'You already responded to this request in the main inbox.' : 'Respond from the main inbox to keep the workflow consistent.' }}</div>
               </div>
+            </div>
+          </div>
+
+          <div v-if="quoteRequests && quoteRequests.length" class="pager-row dashboard-pager">
+            <span>{{ quoteRangeLabel }}</span>
+            <div class="pager-controls">
+              <button class="btn btn-secondary btn-sm" type="button" @click="previousQuotePage" :disabled="quotePage <= 1 || quoteLoading">Prev</button>
+              <span>Page {{ quotePage }} / {{ quoteTotalPages }}</span>
+              <button class="btn btn-secondary btn-sm" type="button" @click="nextQuotePage" :disabled="!quotePagination.hasMore || quoteLoading">Next</button>
             </div>
           </div>
 
@@ -429,6 +463,14 @@
                 </div>
               </div>
             </div>
+            <div class="pager-row dashboard-pager">
+              <span>{{ bookingRangeLabel }}</span>
+              <div class="pager-controls">
+                <button class="btn btn-secondary btn-sm" type="button" @click="previousBookingPage" :disabled="bookingPage <= 1 || loading">Prev</button>
+                <span>Page {{ bookingPage }} / {{ bookingTotalPages }}</span>
+                <button class="btn btn-secondary btn-sm" type="button" @click="nextBookingPage" :disabled="!bookingPagination.hasMore || loading">Next</button>
+              </div>
+            </div>
           </div>
 
           <div v-else class="empty-state">
@@ -463,6 +505,15 @@
             </div>
           </div>
 
+          <div v-if="reviews && reviews.length > 0" class="pager-row dashboard-pager">
+            <span>{{ reviewRangeLabel }}</span>
+            <div class="pager-controls">
+              <button class="btn btn-secondary btn-sm" type="button" @click="previousReviewPage" :disabled="reviewPage <= 1 || loading">Prev</button>
+              <span>Page {{ reviewPage }} / {{ reviewTotalPages }}</span>
+              <button class="btn btn-secondary btn-sm" type="button" @click="nextReviewPage" :disabled="!reviewPagination.hasMore || loading">Next</button>
+            </div>
+          </div>
+
           <div v-else class="empty-state">
             <p>No reviews yet</p>
           </div>
@@ -474,7 +525,7 @@
         <div class="stats-grid">
           <div class="stat-card">
             <h3>Total Bookings</h3>
-            <p class="stat-number">{{ bookings ? bookings.length : 0 }}</p>
+            <p class="stat-number">{{ bookingPagination.totalItems || 0 }}</p>
           </div>
           
           <div class="stat-card">
@@ -498,12 +549,22 @@
 </template>
 
 <script>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
+import { useAccessStore } from '../stores/access'
 import api from '../services/api'
 import ImageUpload from '../components/ImageUpload.vue'
 import MapView from '../components/MapView.vue'
+import {
+  buildOperatorQuoteRoute,
+  formatOperatorQuoteAge,
+  formatOperatorQuoteBudget,
+  formatOperatorQuoteTravelWindow,
+  formatOperatorQuoteTravelers,
+  getOperatorQuoteState,
+} from '../utils/operatorQuotePresentation'
 
 export default {
   name: 'OperatorDashboard',
@@ -514,24 +575,53 @@ export default {
   setup() {
     const authStore = useAuthStore()
     const chatStore = useChatStore()
+    const accessStore = useAccessStore()
+    const router = useRouter()
     
-    const tabs = ['Profile', 'Serving Areas', 'Quote Requests', 'Bookings', 'Reviews', 'Statistics']
+    const tabs = computed(() => {
+      const availableTabs = ['Profile']
+      if (accessStore.hasOperatorPermission('operator.serving_areas.manage')) {
+        availableTabs.push('Serving Areas')
+      }
+      if (accessStore.hasOperatorPermission('operator.quotes.read')) {
+        availableTabs.push('Quote Requests')
+      }
+      availableTabs.push('Bookings', 'Reviews')
+      if (accessStore.hasOperatorPermission('operator.analytics.read')) {
+        availableTabs.push('Statistics')
+      }
+      return availableTabs
+    })
     const activeTab = ref('Profile')
     
     const profile = ref(null)
     const bookings = ref([])
     const reviews = ref([])
     const loading = ref(false)
+    const billingPlanState = ref(null)
+    const billingAnalytics = ref(null)
     const quoteRequests = ref([])
     const quoteLoading = ref(false)
     const quoteError = ref(null)
-    const responseForms = ref({})
-    const responding = ref({})
+    const quotePage = ref(1)
+    const quoteCursors = ref([null])
+    const quotePagination = ref({ totalItems: 0, hasMore: false, nextCursor: null })
+    const canReadBilling = computed(() => accessStore.hasOperatorPermission('operator.billing.read'))
+    const canReadQuotes = computed(() => accessStore.hasOperatorPermission('operator.quotes.read'))
+    const canUpdateProfile = computed(() => accessStore.hasOperatorPermission('operator.profile.update'))
     
     // Booking filter and management
     const bookingFilter = ref('all')
     const bookingStatuses = ['all', 'pending', 'confirmed', 'completed', 'cancelled']
     const bookingUpdating = ref({})
+    const bookingStatusCounts = ref({ all: 0, pending: 0, confirmed: 0, completed: 0, cancelled: 0 })
+    const bookingPage = ref(1)
+    const bookingCursors = ref([null])
+    const bookingPagination = ref({ totalItems: 0, hasMore: false, nextCursor: null })
+    const reviewPage = ref(1)
+    const reviewCursors = ref([null])
+    const reviewPagination = ref({ totalItems: 0, hasMore: false, nextCursor: null })
+    const PAGE_SIZE = 8
     
     // Profile editing
     const editingProfile = ref(false)
@@ -584,12 +674,48 @@ export default {
       profileError.value = null
     }
 
+    const totalPagesFor = (pagination) => Math.max(1, Math.ceil((pagination?.totalItems || 0) / PAGE_SIZE))
+
+    const rangeLabelFor = (pagination, page, currentCount) => {
+      const totalItems = pagination?.totalItems || 0
+      if (!totalItems || !currentCount) return '0-0 of 0'
+      const start = (page - 1) * PAGE_SIZE + 1
+      return `${start}-${start + currentCount - 1} of ${totalItems}`
+    }
+
+    const syncCursor = (cursorRef, page, nextCursor) => {
+      if (cursorRef.value.length === page) {
+        cursorRef.value.push(nextCursor)
+      } else {
+        cursorRef.value[page] = nextCursor
+      }
+      cursorRef.value = cursorRef.value.slice(0, page + 1)
+    }
+
+    const quoteTotalPages = computed(() => totalPagesFor(quotePagination.value))
+    const bookingTotalPages = computed(() => totalPagesFor(bookingPagination.value))
+    const reviewTotalPages = computed(() => totalPagesFor(reviewPagination.value))
+    const quoteRangeLabel = computed(() => rangeLabelFor(quotePagination.value, quotePage.value, quoteRequests.value.length))
+    const bookingRangeLabel = computed(() => rangeLabelFor(bookingPagination.value, bookingPage.value, bookings.value.length))
+    const reviewRangeLabel = computed(() => rangeLabelFor(reviewPagination.value, reviewPage.value, reviews.value.length))
+
     const loadQuoteRequests = async () => {
+      if (!canReadQuotes.value) {
+        quoteRequests.value = []
+        quoteError.value = null
+        return
+      }
       quoteLoading.value = true
       quoteError.value = null
       try {
-        const res = await api.get('/quotes/inbox')
+        const res = await api.get('/quotes/inbox', { params: { page_size: PAGE_SIZE, cursor: quoteCursors.value[quotePage.value - 1] || undefined } })
         quoteRequests.value = res.data.quotes || []
+        quotePagination.value = {
+          totalItems: res.data.pagination?.total_items || quoteRequests.value.length,
+          hasMore: Boolean(res.data.pagination?.has_more),
+          nextCursor: res.data.pagination?.next_cursor || null,
+        }
+        syncCursor(quoteCursors, quotePage.value, quotePagination.value.nextCursor)
       } catch (error) {
         quoteError.value = error.response?.data?.detail || 'Failed to load quote requests'
       } finally {
@@ -600,17 +726,48 @@ export default {
     const loadOperatorData = async () => {
       loading.value = true
       try {
-        // Load profile
-        const profileRes = await api.get('/operators/profile/me')
-        profile.value = profileRes.data
+        const requests = [
+          api.get('/operators/profile/me'),
+          api.get('/bookings/my-bookings', { params: { page_size: PAGE_SIZE, cursor: bookingCursors.value[bookingPage.value - 1] || undefined } }),
+        ]
+        if (canReadBilling.value) {
+          requests.push(api.get('/operator/billing/plan').catch(() => null))
+          requests.push(api.get('/operator/billing/analytics?days=7').catch(() => null))
+        }
 
-        // Load bookings
-        const bookingsRes = await api.get('/bookings/my-bookings')
+        const responses = await Promise.all(requests)
+        const profileRes = responses[0]
+        const bookingsRes = responses[1]
+        const billingPlanRes = canReadBilling.value ? responses[2] : null
+        const billingAnalyticsRes = canReadBilling.value ? responses[3] : null
+
+        profile.value = profileRes.data
         bookings.value = bookingsRes.data.bookings
+        bookingStatusCounts.value = {
+          all: bookingsRes.data.status_counts?.all || bookingsRes.data.pagination?.total_items || bookings.value.length,
+          pending: bookingsRes.data.status_counts?.pending || 0,
+          confirmed: bookingsRes.data.status_counts?.confirmed || 0,
+          completed: bookingsRes.data.status_counts?.completed || 0,
+          cancelled: bookingsRes.data.status_counts?.cancelled || 0,
+        }
+        bookingPagination.value = {
+          totalItems: bookingsRes.data.pagination?.total_items || bookings.value.length,
+          hasMore: Boolean(bookingsRes.data.pagination?.has_more),
+          nextCursor: bookingsRes.data.pagination?.next_cursor || null,
+        }
+        syncCursor(bookingCursors, bookingPage.value, bookingPagination.value.nextCursor)
+        billingPlanState.value = billingPlanRes?.data || null
+        billingAnalytics.value = billingAnalyticsRes?.data || null
 
         // Load reviews
-        const reviewsRes = await api.get(`/bookings/ratings/operator/${profileRes.data._id}`)
+        const reviewsRes = await api.get(`/bookings/ratings/operator/${profileRes.data._id}`, { params: { page_size: PAGE_SIZE, cursor: reviewCursors.value[reviewPage.value - 1] || undefined } })
         reviews.value = reviewsRes.data.ratings
+        reviewPagination.value = {
+          totalItems: reviewsRes.data.pagination?.total_items || reviews.value.length,
+          hasMore: Boolean(reviewsRes.data.pagination?.has_more),
+          nextCursor: reviewsRes.data.pagination?.next_cursor || null,
+        }
+        syncCursor(reviewCursors, reviewPage.value, reviewPagination.value.nextCursor)
 
         await loadQuoteRequests()
       } catch (error) {
@@ -654,32 +811,20 @@ export default {
         }))
     }
 
-    const ensureResponseForm = (quoteId) => {
-      if (!responseForms.value[quoteId]) {
-        responseForms.value[quoteId] = { amount: null, message: '' }
-      }
-      return responseForms.value[quoteId]
-    }
+    const getQuoteStatusClass = (quote) => getOperatorQuoteState(quote, profile.value?._id).key === 'responded' ? 'status-responded' : 'status-new'
 
-    const submitQuoteResponse = async (quoteId) => {
-      quoteError.value = null
-      const payload = responseForms.value[quoteId] || {}
-      if (!payload.message && payload.amount === undefined) {
-        quoteError.value = 'Add a message or amount before sending your quote.'
-        return
-      }
-      responding.value[quoteId] = true
-      try {
-        await api.post(`/quotes/${quoteId}/respond`, {
-          amount: payload.amount || null,
-          message: payload.message || ''
-        })
-        await loadQuoteRequests()
-      } catch (error) {
-        quoteError.value = error.response?.data?.detail || 'Failed to send response'
-      } finally {
-        responding.value[quoteId] = false
-      }
+    const getQuoteStatusLabel = (quote) => getOperatorQuoteState(quote, profile.value?._id).label
+
+    const formatQuoteAge = (value) => formatOperatorQuoteAge(value)
+
+    const formatQuoteTravelWindow = (value) => formatOperatorQuoteTravelWindow(value)
+
+    const formatQuoteTravelers = (value) => formatOperatorQuoteTravelers(value)
+
+    const formatQuoteBudget = (value) => formatOperatorQuoteBudget(value)
+
+    const openQuoteInInbox = async (quoteId) => {
+      await router.push(buildOperatorQuoteRoute(quoteId))
     }
 
     const addServingArea = async () => {
@@ -813,10 +958,7 @@ export default {
     }
 
     const getBookingCountByStatus = (status) => {
-      if (status === 'all') return bookings.value.length
-      return bookings.value.filter(
-        b => b.booking_status?.status === status
-      ).length
+      return bookingStatusCounts.value[status] ?? 0
     }
 
     const filteredBookings = computed(() => {
@@ -828,7 +970,53 @@ export default {
       )
     })
 
+    const billingTotals = computed(() => billingAnalytics.value?.totals || {
+      billable_events: 0,
+      non_billable_events: 0,
+      credits_consumed: 0,
+      spend_amount: 0,
+    })
+
+    const billingCurrentCredits = computed(() => Number(billingPlanState.value?.subscription?.credits_remaining || 0))
+    const billingCurrentPlan = computed(() => billingPlanState.value?.plan?.name || 'Free')
+
+    const billingMiniBars = computed(() => {
+      const rows = billingAnalytics.value?.daily || []
+      const aggregated = new Map()
+      rows.forEach((row) => {
+        const existing = aggregated.get(row.date) || { date: row.date, spend_amount: 0 }
+        existing.spend_amount += Number(row.spend_amount || 0)
+        aggregated.set(row.date, existing)
+      })
+      const values = Array.from(aggregated.values())
+        .sort((left, right) => left.date.localeCompare(right.date))
+        .slice(-7)
+      const maxSpend = Math.max(...values.map((item) => item.spend_amount), 0)
+      return values.map((item) => ({
+        ...item,
+        label: new Date(`${item.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        height: maxSpend > 0 ? Math.max(10, Math.round((item.spend_amount / maxSpend) * 100)) : 0,
+      }))
+    })
+
+    const billingTopSurfaces = computed(() =>
+      (billingAnalytics.value?.by_surface || [])
+        .slice()
+        .sort((left, right) => Number(right.spend_amount || 0) - Number(left.spend_amount || 0))
+        .slice(0, 2)
+    )
+
+    const formatBillingMoney = (value) => Number(value || 0).toFixed(2)
+    const humanizeBilling = (value) => String(value || 'none').replaceAll('_', ' ')
+
+    watch(tabs, (availableTabs) => {
+      if (!availableTabs.includes(activeTab.value)) {
+        activeTab.value = availableTabs[0] || 'Profile'
+      }
+    }, { immediate: true })
+
     onMounted(async () => {
+      await accessStore.loadOperatorContext().catch(() => null)
       // Initialize profile form with current profile data
       const profileRes = await api.get('/operators/profile/me').catch(() => null)
       
@@ -873,6 +1061,42 @@ export default {
       }
     }
 
+    const previousQuotePage = async () => {
+      if (quotePage.value === 1 || quoteLoading.value) return
+      quotePage.value -= 1
+      await loadQuoteRequests()
+    }
+
+    const nextQuotePage = async () => {
+      if (!quotePagination.value.hasMore || quoteLoading.value) return
+      quotePage.value += 1
+      await loadQuoteRequests()
+    }
+
+    const previousBookingPage = async () => {
+      if (bookingPage.value === 1 || loading.value) return
+      bookingPage.value -= 1
+      await loadOperatorData()
+    }
+
+    const nextBookingPage = async () => {
+      if (!bookingPagination.value.hasMore || loading.value) return
+      bookingPage.value += 1
+      await loadOperatorData()
+    }
+
+    const previousReviewPage = async () => {
+      if (reviewPage.value === 1 || loading.value) return
+      reviewPage.value -= 1
+      await loadOperatorData()
+    }
+
+    const nextReviewPage = async () => {
+      if (!reviewPagination.value.hasMore || loading.value) return
+      reviewPage.value += 1
+      await loadOperatorData()
+    }
+
     return {
       tabs,
       activeTab,
@@ -883,12 +1107,31 @@ export default {
       quoteRequests,
       quoteLoading,
       quoteError,
-      responseForms,
-      responding,
+      quotePage,
+      quotePagination,
+      quoteTotalPages,
+      quoteRangeLabel,
       bookingFilter,
       bookingStatuses,
       bookingUpdating,
+      bookingPage,
+      bookingPagination,
+      bookingTotalPages,
+      bookingRangeLabel,
+      reviewPage,
+      reviewPagination,
+      reviewTotalPages,
+      reviewRangeLabel,
       filteredBookings,
+      canReadBilling,
+      canUpdateProfile,
+      billingTotals,
+      billingCurrentCredits,
+      billingCurrentPlan,
+      billingMiniBars,
+      billingTopSurfaces,
+      formatBillingMoney,
+      humanizeBilling,
       editingProfile,
       profileForm,
       specializationsInput,
@@ -904,15 +1147,26 @@ export default {
       deleteServingArea,
       resetServingAreaForm,
       loadQuoteRequests,
-      submitQuoteResponse,
       getQuoteLocations,
-      ensureResponseForm,
+      getQuoteStatusClass,
+      getQuoteStatusLabel,
+      formatQuoteAge,
+      formatQuoteTravelWindow,
+      formatQuoteTravelers,
+      formatQuoteBudget,
       updateBookingStatus,
       cancelBookingRequest,
       formatStatus,
       getBookingCountByStatus,
       startChat,
       startQuoteChat,
+      openQuoteInInbox,
+      previousQuotePage,
+      nextQuotePage,
+      previousBookingPage,
+      nextBookingPage,
+      previousReviewPage,
+      nextReviewPage,
       loadOperatorData,
       switchTab
     }
@@ -923,6 +1177,169 @@ export default {
 <style scoped>
 .operator-dashboard {
   padding: 2rem 0;
+}
+
+.billing-summary-card {
+  margin-bottom: 2rem;
+  padding: 1.6rem;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #10201f 0%, #155e75 52%, #1d4ed8 100%);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.14);
+  color: #fff;
+}
+
+.dashboard-pager {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.pager-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.billing-summary-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.billing-kicker {
+  margin: 0 0 0.2rem;
+  color: rgba(255,255,255,0.66);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.billing-summary-head h2 {
+  margin: 0;
+  font-size: 1.35rem;
+  color: #fff;
+}
+
+.billing-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.7rem 0.95rem;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: #fff;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.billing-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+
+.billing-metric {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 16px;
+  padding: 1rem;
+}
+
+.billing-metric span {
+  display: block;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255,255,255,0.68);
+}
+
+.billing-metric strong {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 1.45rem;
+}
+
+.billing-metric p {
+  margin: 0.45rem 0 0;
+  color: rgba(255,255,255,0.82);
+}
+
+.billing-mini-row {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.billing-mini-chart {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.55rem;
+  align-items: end;
+  min-height: 140px;
+}
+
+.billing-mini-bar-wrap {
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+}
+
+.billing-mini-bar-track {
+  width: 100%;
+  height: 96px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.12);
+  position: relative;
+  overflow: hidden;
+}
+
+.billing-mini-bar-fill {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  min-height: 4px;
+  border-radius: inherit;
+  background: linear-gradient(180deg, #f59e0b, #ea580c);
+}
+
+.billing-mini-bar-wrap span {
+  font-size: 0.7rem;
+  color: rgba(255,255,255,0.72);
+}
+
+.billing-surfaces {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.billing-surface-chip {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.9rem 1rem;
+  border-radius: 16px;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.14);
+}
+
+.billing-surface-chip strong {
+  color: #fff;
+}
+
+.billing-surface-chip span,
+.billing-empty {
+  color: rgba(255,255,255,0.74);
+}
+
+.billing-empty.compact {
+  min-height: 0;
+  padding: 0.2rem 0;
 }
 
 h1 {
@@ -936,6 +1353,19 @@ h1 {
   margin-bottom: 2rem;
   border-bottom: 2px solid #ecf0f1;
   flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  .billing-summary-grid,
+  .billing-mini-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .billing-summary-head {
+    flex-direction: column;
+  }
 }
 
 .tab-btn {

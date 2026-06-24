@@ -5,39 +5,42 @@
 - Backend server running (`python main.py` from `/backend`)
 - Frontend development server running (`npm run dev` from `/frontend`)
 
-## Step 1: Create Admin User
+## Step 1: Ensure Local Admin Accounts Exist
 
-Run the admin seeding script:
+Local Docker development already seeds admin accounts into `tour_app_db` via `backend.scripts.seed_local_dev`.
+If you need to recreate or backfill them from the host machine, run:
 
 ```bash
-cd backend
-python scripts/create_admin.py
+cd /path/to/tour_app
+python -m backend.scripts.create_admin
 ```
 
 **Output:**
 ```
 ==================================================
-   TOUR APP - ADMIN USER CREATION
+   TOUR APP - LOCAL ADMIN USER CREATION
 ==================================================
 
-Creating super admin user...
+Connected to MongoDB at mongodb://localhost:27017
+Target database: tour_app_db
+
+Ensuring super_admin account...
 ✅ Admin user created successfully!
-   Email: admin@tourapp.com
+   Email: admin@tourapp.local
    Password: admin@123
    Role: super_admin
    ID: <admin_id>
 
---------------------------------------------------
 
-Creating moderator user...
+Ensuring moderator account...
 ✅ Moderator user created successfully!
-   Email: moderator@tourapp.com
+   Email: moderator@tourapp.local
    Password: moderator@123
    Role: moderator
    ID: <moderator_id>
 
 ==================================================
-   Setup complete! You can now login to admin dashboard.
+   Local admin setup complete.
 ==================================================
 ```
 
@@ -45,7 +48,7 @@ Creating moderator user...
 
 1. Open browser: `http://localhost:5173/admin/login`
 2. Enter credentials:
-   - Email: `admin@tourapp.com`
+   - Email: `admin@tourapp.local`
    - Password: `admin@123`
 3. Click "Sign In"
 

@@ -1,4 +1,5 @@
 # FastAPI and ASGI Server
+# System requirement for backup/restore: mongodump and mongorestore must be available in the backend runtime.
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
 python-multipart==0.0.6
@@ -25,6 +26,7 @@ fastapi-cors==0.0.6
 
 # Utilities
 python-dateutil==2.8.2
+httpx==0.27.2
 
 # AWS Bedrock
 boto3==1.34.144

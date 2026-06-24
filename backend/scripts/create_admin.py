@@ -1,102 +1,113 @@
+"""Create local-development admin accounts.
+
+Run from the repository root:
+  python -m backend.scripts.create_admin
 """
-Script to add the first admin user to the database.
-Run this from the backend directory: python scripts/create_admin.py
-"""
+
 import asyncio
-from motor.motor_asyncio import AsyncClient
-from passlib.context import CryptContext
 from datetime import datetime, timezone
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+from motor.motor_asyncio import AsyncIOMotorClient
 
-async def create_first_admin():
-    """Create the first admin user in the database"""
-    
-    # Database connection
-    client = AsyncClient("mongodb://localhost:27017")
-    db = client.tour_app
-    
-    try:
-        # Check if admin already exists
-        existing_admin = await db.admins.find_one({})
-        if existing_admin:
-            print("❌ Admin user(s) already exist in database. Skipping creation.")
-            return
-        
-        # Create admin user
-        admin_data = {
-            "email": "admin@tourapp.com",
-            "full_name": "Admin User",
-            "phone": "+91-0000000000",
-            "hashed_password": pwd_context.hash("admin@123"),
-            "role": "super_admin",
-            "is_active": True,
-            "created_at": datetime.now(timezone.utc),
-            "last_login": None
-        }
-        
-        result = await db.admins.insert_one(admin_data)
-        
-        print("✅ Admin user created successfully!")
-        print(f"   Email: admin@tourapp.com")
-        print(f"   Password: admin@123")
-        print(f"   Role: super_admin")
-        print(f"   ID: {result.inserted_id}")
-        print("\n⚠️  IMPORTANT: Change this password after first login!")
-        
-    finally:
-        client.close()
+from backend.config import settings
+from backend.utils.auth import get_password_hash
 
-async def create_moderator_admin():
-    """Create a moderator admin user"""
-    
-    client = AsyncClient("mongodb://localhost:27017")
-    db = client.tour_app
-    
-    try:
-        # Create moderator
-        moderator_data = {
-            "email": "moderator@tourapp.com",
-            "full_name": "Moderator User",
-            "phone": "+91-0000000001",
-            "hashed_password": pwd_context.hash("moderator@123"),
-            "role": "moderator",
-            "is_active": True,
-            "created_at": datetime.now(timezone.utc),
-            "last_login": None
-        }
-        
-        result = await db.admins.insert_one(moderator_data)
-        
-        print("✅ Moderator user created successfully!")
-        print(f"   Email: moderator@tourapp.com")
-        print(f"   Password: moderator@123")
-        print(f"   Role: moderator")
-        print(f"   ID: {result.inserted_id}")
-        
-    finally:
-        client.close()
+
+ADMIN_USERS = [
+    {
+        "email": "admin@tourapp.local",
+        "full_name": "Local Admin",
+        "phone": "+91-9000000100",
+        "password": "admin@123",
+        "role": "super_admin",
+    },
+    {
+        "email": "moderator@tourapp.local",
+        "full_name": "Local Moderator",
+        "phone": "+91-9000000101",
+        "password": "moderator@123",
+        "role": "moderator",
+    },
+]
+
+
+async def open_database():
+    candidate_urls = [settings.mongodb_url]
+    if "mongo:27017" in settings.mongodb_url:
+        candidate_urls.append(settings.mongodb_url.replace("mongo:27017", "localhost:27017"))
+    elif settings.mongodb_url != "mongodb://localhost:27017":
+        candidate_urls.append("mongodb://localhost:27017")
+
+    last_error = None
+    for url in dict.fromkeys(candidate_urls):
+        client = AsyncIOMotorClient(url, serverSelectionTimeoutMS=3000)
+        try:
+            await client.admin.command("ping")
+            print(f"Connected to MongoDB at {url}")
+            return client, client[settings.database_name]
+        except Exception as exc:
+            client.close()
+            last_error = exc
+
+    raise RuntimeError(
+        f"Unable to connect to MongoDB using {candidate_urls} for database {settings.database_name}"
+    ) from last_error
+
+
+async def ensure_admin(db, admin_data):
+    existing_admin = await db.admins.find_one({"email": admin_data["email"]})
+    if existing_admin:
+        print(f"ℹ️  Admin already exists: {admin_data['email']}")
+        return False
+
+    now = datetime.now(timezone.utc)
+    doc = {
+        "email": admin_data["email"],
+        "full_name": admin_data["full_name"],
+        "phone": admin_data["phone"],
+        "hashed_password": get_password_hash(admin_data["password"]),
+        "role": admin_data["role"],
+        "is_active": True,
+        "created_at": now,
+        "updated_at": now,
+        "last_login": None,
+    }
+
+    result = await db.admins.insert_one(doc)
+    print("✅ Admin user created successfully!")
+    print(f"   Email: {admin_data['email']}")
+    print(f"   Password: {admin_data['password']}")
+    print(f"   Role: {admin_data['role']}")
+    print(f"   ID: {result.inserted_id}")
+    return True
+
 
 async def main():
-    """Main function"""
-    print("\n" + "="*50)
-    print("   TOUR APP - ADMIN USER CREATION")
-    print("="*50 + "\n")
-    
-    # Create super admin
-    print("Creating super admin user...")
-    await create_first_admin()
-    
-    print("\n" + "-"*50 + "\n")
-    
-    # Create moderator
-    print("Creating moderator user...")
-    await create_moderator_admin()
-    
-    print("\n" + "="*50)
-    print("   Setup complete! You can now login to admin dashboard.")
-    print("="*50 + "\n")
+    print("\n" + "=" * 50)
+    print("   TOUR APP - LOCAL ADMIN USER CREATION")
+    print("=" * 50 + "\n")
+
+    client, db = await open_database()
+    try:
+        print(f"Target database: {settings.database_name}\n")
+        created_any = False
+        for admin_data in ADMIN_USERS:
+            print(f"Ensuring {admin_data['role']} account...")
+            created = await ensure_admin(db, admin_data)
+            created_any = created_any or created
+            print()
+
+        if created_any:
+            print("⚠️  IMPORTANT: Change these passwords after first login!")
+        else:
+            print("No new admin accounts were created.")
+
+        print("\n" + "=" * 50)
+        print("   Local admin setup complete.")
+        print("=" * 50 + "\n")
+    finally:
+        client.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

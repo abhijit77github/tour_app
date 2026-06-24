@@ -766,18 +766,20 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import api from '../services/api'
+import { adminBrandConfig } from '../config/adminBrand'
 
 const activeTab = ref('general')
 const loading = ref(false)
 const loadError = ref('')
+const adminBrand = adminBrandConfig
 
 // General Settings
 const settings = ref({
   general: {
-    appName: 'Tour App',
-    appUrl: 'https://tourapp.com',
-    supportEmail: 'support@tourapp.com',
-    supportPhone: '+91-9876543210',
+    appName: adminBrand.appName,
+    appUrl: adminBrand.appUrl,
+    supportEmail: adminBrand.supportEmail,
+    supportPhone: adminBrand.supportPhone,
     defaultLanguage: 'en',
     timezone: 'IST',
     dateFormat: 'DD/MM/YYYY',
@@ -817,25 +819,25 @@ const systemHealth = ref({
 const adminUsers = ref([
   {
     _id: '1',
-    name: 'Rajesh Kumar',
-    email: 'rajesh@tourapp.com',
-    role: 'admin',
+    name: adminBrand.sampleAdminUsers[0].name,
+    email: adminBrand.sampleAdminUsers[0].email,
+    role: adminBrand.sampleAdminUsers[0].role,
     status: 'active',
     lastLogin: new Date('2026-02-06T10:30:00')
   },
   {
     _id: '2',
-    name: 'Priya Singh',
-    email: 'priya@tourapp.com',
-    role: 'manager',
+    name: adminBrand.sampleAdminUsers[1].name,
+    email: adminBrand.sampleAdminUsers[1].email,
+    role: adminBrand.sampleAdminUsers[1].role,
     status: 'active',
     lastLogin: new Date('2026-02-06T09:15:00')
   },
   {
     _id: '3',
-    name: 'Amit Patel',
-    email: 'amit@tourapp.com',
-    role: 'supervisor',
+    name: adminBrand.sampleAdminUsers[2].name,
+    email: adminBrand.sampleAdminUsers[2].email,
+    role: adminBrand.sampleAdminUsers[2].role,
     status: 'active',
     lastLogin: new Date('2026-02-05T14:45:00')
   }

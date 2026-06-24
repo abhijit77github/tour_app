@@ -12,9 +12,11 @@ router = APIRouter(prefix="/upload", tags=["Upload"])
 UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
 PROFILE_DIR = UPLOAD_DIR / "profiles"
 LOCATION_DIR = UPLOAD_DIR / "locations"
+TICKET_DIR = UPLOAD_DIR / "tickets"
 
 PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 LOCATION_DIR.mkdir(parents=True, exist_ok=True)
+TICKET_DIR.mkdir(parents=True, exist_ok=True)
 
 # Allowed file extensions
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
@@ -123,6 +125,42 @@ async def upload_location_images(
         )
 
 
+@router.post("/ticket-attachments")
+async def upload_ticket_attachments(
+    files: List[UploadFile] = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Upload ticket attachment images."""
+    if len(files) > 5:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Maximum 5 attachments allowed per upload"
+        )
+
+    uploaded_files = []
+
+    try:
+        for file in files:
+            validate_image_file(file)
+            filename = save_upload_file(file, TICKET_DIR)
+            image_url = f"/uploads/tickets/{filename}"
+            uploaded_files.append({
+                "filename": filename,
+                "url": image_url,
+                "original_name": file.filename,
+            })
+
+        return {
+            "message": f"{len(uploaded_files)} attachments uploaded successfully",
+            "files": uploaded_files,
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload files: {str(e)}"
+        )
+
+
 @router.delete("/image/{image_type}/{filename}")
 async def delete_image(
     image_type: str,
@@ -130,13 +168,18 @@ async def delete_image(
     current_user: dict = Depends(get_current_user)
 ):
     """Delete an uploaded image"""
-    if image_type not in ["profiles", "locations"]:
+    if image_type not in ["profiles", "locations", "tickets"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid image type. Must be 'profiles' or 'locations'"
+            detail="Invalid image type. Must be 'profiles', 'locations' or 'tickets'"
         )
     
-    image_dir = PROFILE_DIR if image_type == "profiles" else LOCATION_DIR
+    if image_type == "profiles":
+        image_dir = PROFILE_DIR
+    elif image_type == "locations":
+        image_dir = LOCATION_DIR
+    else:
+        image_dir = TICKET_DIR
     file_path = image_dir / filename
     
     if not file_path.exists():

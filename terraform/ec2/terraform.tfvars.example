@@ -1,0 +1,18 @@
+aws_region       = "us-east-1"
+environment      = "staging"
+instance_type    = "t3.medium"
+key_name         = "replace-with-your-keypair"
+ssh_ingress_cidr = "203.0.113.10/32"
+
+backend_image    = "your-registry/tour-app-backend:ec2-test"
+frontend_image   = "your-registry/tour-app-frontend:ec2-test"
+
+secret_key       = "replace-with-a-long-random-secret"
+frontend_origin  = "http://YOUR_EC2_PUBLIC_IP"
+domain_name      = "_"
+enable_tls       = false
+tls_email        = ""
+
+allocate_eip     = true
+database_name    = "tour_app_db"
+backend_debug    = false

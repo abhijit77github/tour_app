@@ -65,6 +65,7 @@ Overview and status documents for the entire project.
 | **INDEX.md** | Documentation navigation | New developers |
 | **README.md** | Project overview & tech stack | Project intro |
 | **CURRENT_STATUS.md** | Progress tracking & metrics | Project managers |
+| **MONGODB_SCALING_HARDENING.md** | MongoDB scaling assessment & hardening checklist | Backend, platform |
 | **IMPLEMENTATION_SUMMARY.md** | Technical architecture | Developers |
 | **FINAL_DELIVERY_SUMMARY.md** | Complete delivery overview | Stakeholders |
 | **SESSION_SUMMARY.md** | Development session notes | Team leads |

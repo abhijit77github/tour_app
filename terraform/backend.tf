@@ -7,12 +7,11 @@ resource "kubernetes_config_map" "backend_config" {
   }
 
   data = {
-    "PORT"           = tostring(var.backend_port)
-    "MONGODB_HOST"   = local.mongodb_host
-    "MONGODB_PORT"   = tostring(local.mongodb_port)
-    "MONGODB_DB"     = "tour_app"
-    "JWT_SECRET"     = random_password.jwt_secret.result
-    "ENVIRONMENT"    = var.environment
+    "PORT"          = tostring(var.backend_port)
+    "DATABASE_NAME" = var.database_name
+    "FRONTEND_URL"  = local.frontend_origin
+    "DEBUG"         = var.environment == "prod" ? "false" : "true"
+    "HOST"          = "0.0.0.0"
   }
 
   depends_on = [kubernetes_namespace.tour_app]
@@ -29,8 +28,8 @@ resource "kubernetes_secret" "backend_secrets" {
   type = "Opaque"
 
   data = {
-    MONGODB_USERNAME = base64encode("admin")
-    MONGODB_PASSWORD = base64encode(random_password.mongodb_password.result)
+    MONGODB_URL = base64encode("mongodb://admin:${random_password.mongodb_password.result}@${local.mongodb_host}:${local.mongodb_port}/?authSource=admin")
+    SECRET_KEY  = base64encode(random_password.jwt_secret.result)
   }
 
   depends_on = [kubernetes_namespace.tour_app]
@@ -136,7 +135,7 @@ resource "kubernetes_deployment" "backend" {
 
           liveness_probe {
             http_get {
-              path   = "/auth/me"
+              path   = "/health"
               port   = var.backend_port
               scheme = "HTTP"
             }
@@ -148,7 +147,7 @@ resource "kubernetes_deployment" "backend" {
 
           readiness_probe {
             http_get {
-              path   = "/auth/me"
+              path   = "/health"
               port   = var.backend_port
               scheme = "HTTP"
             }

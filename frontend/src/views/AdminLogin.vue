@@ -8,8 +8,11 @@
       <div class="login-card">
         <!-- Logo/Header -->
         <div class="login-header">
-          <h1>Admin Portal</h1>
-          <p>Tour App Management System</p>
+          <div class="brand-badge">
+            <img :src="brandLogo" :alt="adminBrand.logoAlt" class="brand-logo" />
+          </div>
+          <h1>{{ adminBrand.portalTitle }}</h1>
+          <p>{{ adminBrand.portalSubtitle }}</p>
         </div>
 
         <!-- Form -->
@@ -21,7 +24,7 @@
               id="email"
               v-model="credentials.email"
               type="email"
-              placeholder="admin@tourapp.com"
+              :placeholder="adminBrand.loginEmailPlaceholder"
               class="form-control"
               required
             />
@@ -81,7 +84,7 @@
 
         <!-- Footer -->
         <div class="login-footer">
-          <p>For security issues, contact support@tourapp.com</p>
+          <p>For security issues, contact {{ adminBrand.supportEmail }}</p>
         </div>
       </div>
 
@@ -98,9 +101,12 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import api from '../services/api'
+import brandLogo from '../../resources/logo/app_logo_compact.svg'
+import { adminBrandConfig } from '../config/adminBrand'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const adminBrand = adminBrandConfig
 
 const credentials = ref({
   email: '',
@@ -164,7 +170,9 @@ const handleLogin = async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background:
+    radial-gradient(circle at top left, rgba(242, 198, 107, 0.18), transparent 30%),
+    linear-gradient(145deg, #0f766e 0%, #0b5f59 45%, #102a43 100%);
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   position: relative;
   overflow: hidden;
@@ -193,12 +201,13 @@ const handleLogin = async () => {
 }
 
 .login-card {
-  background: white;
-  border-radius: 16px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  background: rgba(255, 255, 255, 0.97);
+  border-radius: 24px;
+  box-shadow: 0 26px 70px rgba(15, 23, 42, 0.24);
   padding: 3rem 2.5rem;
   backdrop-filter: blur(10px);
   animation: slideUp 0.5s ease-out;
+  border: 1px solid rgba(255, 255, 255, 0.35);
 }
 
 @keyframes slideUp {
@@ -218,12 +227,25 @@ const handleLogin = async () => {
   margin-bottom: 2rem;
 }
 
+.brand-badge {
+  width: 196px;
+  height: 64px;
+  margin: 0 auto 1rem;
+}
+
+.brand-logo {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
 .login-header h1 {
   font-size: 2rem;
   font-weight: 700;
   color: #1a202c;
   margin: 0 0 0.5rem 0;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #0f766e 0%, #102a43 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -264,8 +286,8 @@ const handleLogin = async () => {
 
 .form-control:focus {
   outline: none;
-  border-color: #667eea;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
   background-color: #f7fafc;
 }
 
@@ -298,7 +320,7 @@ const handleLogin = async () => {
 }
 
 .toggle-password:hover {
-  color: #667eea;
+  color: #0f766e;
 }
 
 /* Checkbox */
@@ -312,7 +334,7 @@ const handleLogin = async () => {
   width: 1.2rem;
   height: 1.2rem;
   cursor: pointer;
-  accent-color: #667eea;
+  accent-color: #0f766e;
   margin-right: 0.5rem;
 }
 
@@ -340,18 +362,18 @@ const handleLogin = async () => {
   font-size: 1rem;
   font-weight: 600;
   color: white;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #0f766e 0%, #0b5f59 100%);
   border: none;
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.3s ease;
-  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+  box-shadow: 0 8px 22px rgba(15, 118, 110, 0.26);
   margin-bottom: 1rem;
 }
 
 .btn-login:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+  box-shadow: 0 12px 24px rgba(15, 118, 110, 0.3);
 }
 
 .btn-login:active:not(:disabled) {
@@ -424,6 +446,11 @@ const handleLogin = async () => {
 
   .login-card {
     padding: 2rem 1.5rem;
+  }
+
+  .brand-badge {
+    width: 172px;
+    height: 58px;
   }
 
   .login-header h1 {

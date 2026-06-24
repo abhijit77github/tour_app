@@ -4,6 +4,7 @@ from typing import List, Optional
 from bson import ObjectId
 from pydantic import BaseModel, Field
 
+from .itinerary import BudgetBand, ItineraryDayItem, ItineraryLocation
 from .operator import LocationCoordinates
 from .user import PyObjectId
 
@@ -22,7 +23,23 @@ class QuoteResponse(BaseModel):
     operator_name: Optional[str] = None
     amount: Optional[float] = None
     message: Optional[str] = None
+    proposed_itinerary_snapshot: Optional[dict] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class QuoteItineraryProposal(BaseModel):
+    title: str
+    summary: Optional[str] = None
+    primary_location: Optional[ItineraryLocation] = None
+    route_locations: List[ItineraryLocation] = Field(default_factory=list)
+    duration_days: int = Field(ge=1, le=30)
+    trip_styles: List[str] = Field(default_factory=list)
+    travelers: Optional[int] = Field(default=None, ge=1)
+    budget_band: Optional[BudgetBand] = None
+    notes: Optional[str] = None
+    days: List[ItineraryDayItem] = Field(default_factory=list)
+    source_template_id: Optional[str] = None
+    source_template_title: Optional[str] = None
 
 
 class QuoteRequest(BaseModel):
@@ -34,6 +51,8 @@ class QuoteRequest(BaseModel):
     budget: Optional[float] = None
     travel_window: Optional[str] = None
     travelers: Optional[int] = None
+    attached_itinerary_id: Optional[str] = None
+    attached_itinerary_snapshot: Optional[dict] = None
     status: str = "open"
     responses: List[QuoteResponse] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -51,8 +70,10 @@ class QuoteRequestCreate(BaseModel):
     budget: Optional[float] = None
     travel_window: Optional[str] = None
     travelers: Optional[int] = None
+    attached_itinerary_id: Optional[str] = None
 
 
 class QuoteResponseCreate(BaseModel):
     amount: Optional[float] = None
     message: Optional[str] = None
+    proposed_itinerary_snapshot: Optional[QuoteItineraryProposal] = None

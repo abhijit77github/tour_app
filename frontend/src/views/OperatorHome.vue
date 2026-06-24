@@ -37,6 +37,13 @@
               <p class="stat-label">Bookings</p>
             </div>
           </div>
+          <div class="stat-card">
+            <span class="stat-icon">🎫</span>
+            <div>
+              <p class="stat-value">{{ openTicketsCount }}</p>
+              <p class="stat-label">Open Tickets</p>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -67,7 +74,7 @@
               <span class="arrow">→</span>
             </router-link>
 
-            <router-link to="/operator/dashboard" class="nav-card areas-card">
+            <router-link v-if="canManageServingAreas" to="/operator/dashboard" class="nav-card areas-card">
               <div class="nav-icon">🗺️</div>
               <div>
                 <h3>Serving Areas</h3>
@@ -84,11 +91,56 @@
               </div>
               <span class="arrow">→</span>
             </router-link>
+
+            <router-link v-if="canReadPromotions" to="/operator/promotions" class="nav-card profile-card">
+              <div class="nav-icon">📣</div>
+              <div>
+                <h3>Promotions</h3>
+                <p>Buy location promotion packages</p>
+              </div>
+              <span class="arrow">→</span>
+            </router-link>
+
+            <router-link v-if="canReadBilling" to="/operator/billing-analytics" class="nav-card dashboard-card">
+              <div class="nav-icon">💹</div>
+              <div>
+                <h3>Billing Analytics</h3>
+                <p>See spend trends and credit burn</p>
+              </div>
+              <span class="arrow">→</span>
+            </router-link>
+
+            <router-link v-if="canManageItineraries" to="/operator/itineraries" class="nav-card areas-card">
+              <div class="nav-icon">🗓️</div>
+              <div>
+                <h3>Itineraries</h3>
+                <p>Publish reusable trip plans</p>
+              </div>
+              <span class="arrow">→</span>
+            </router-link>
+
+            <router-link v-if="canManageTeam" to="/operator/team" class="nav-card bookings-card">
+              <div class="nav-icon">🛡️</div>
+              <div>
+                <h3>Team Access</h3>
+                <p>Manage staff roles and section access</p>
+              </div>
+              <span class="arrow">→</span>
+            </router-link>
+
+            <router-link v-if="canReadTickets" to="/operator/tickets" class="nav-card profile-card">
+              <div class="nav-icon">🎫</div>
+              <div>
+                <h3>Support Tickets</h3>
+                <p>Report issues and track admin updates</p>
+              </div>
+              <span class="arrow">→</span>
+            </router-link>
           </div>
         </section>
 
         <!-- Recent Quote Requests -->
-        <section class="quotes-section">
+        <section v-if="canReadQuotes" class="quotes-section">
           <div class="section-header">
             <div>
               <h2>Recent Quote Requests</h2>
@@ -118,9 +170,9 @@
               <!-- Card Header -->
               <div class="quote-header">
                 <div class="quote-meta">
-                  <h3>{{ quote.locations.length }} Location{{ quote.locations.length > 1 ? 's' : '' }}</h3>
-                  <span class="quote-badge" :class="getStatusClass(quote.status)">
-                    {{ quote.status }}
+                  <h3>{{ quote.tourist_name }}</h3>
+                  <span class="quote-badge" :class="getStatusClass(quote)">
+                    {{ getStatusLabel(quote) }}
                   </span>
                 </div>
                 <p class="quote-time">{{ formatTime(quote.created_at) }}</p>
@@ -148,15 +200,15 @@
                 </div>
                 <div v-if="quote.travel_window" class="info-item">
                   <span class="info-label">When:</span>
-                  <span class="info-value">{{ quote.travel_window }}</span>
+                  <span class="info-value">{{ formatTravelWindow(quote.travel_window) }}</span>
                 </div>
                 <div v-if="quote.travelers" class="info-item">
                   <span class="info-label">Travelers:</span>
-                  <span class="info-value">{{ quote.travelers }} people</span>
+                  <span class="info-value">{{ formatTravelers(quote.travelers) }}</span>
                 </div>
                 <div v-if="quote.budget" class="info-item">
                   <span class="info-label">Budget:</span>
-                  <span class="info-value">${{ quote.budget }}</span>
+                  <span class="info-value">{{ formatBudget(quote.budget) }}</span>
                 </div>
               </div>
 
@@ -180,10 +232,10 @@
                   :to="getQuoteRoute(quote._id)"
                   class="btn btn-primary btn-small"
                 >
-                  Respond with Quote
+                  Open in Inbox
                 </router-link>
                 <button class="btn btn-secondary btn-small" @click="markAsRead(quote._id)">
-                  Details
+                  Focus Request
                 </button>
               </div>
             </div>
@@ -196,11 +248,17 @@
         <!-- Featured Section -->
         <section class="featured-section">
           <h3>Featured for Operators</h3>
-          <div class="featured-item">
+          <div v-if="canReadPromotions" class="featured-item">
             <div class="featured-icon">🌟</div>
             <h4>Premium Listing</h4>
             <p>Boost your visibility and attract more tourists</p>
-            <router-link to="/operator/dashboard" class="btn btn-text-small">Learn More →</router-link>
+            <router-link to="/operator/promotions" class="btn btn-text-small">Learn More →</router-link>
+          </div>
+          <div v-if="canReadBilling" class="featured-item analytics-item">
+            <div class="featured-icon">📊</div>
+            <h4>Billing Trends</h4>
+            <p>Track where your credits and spend are actually going.</p>
+            <router-link to="/operator/billing-analytics" class="btn btn-text-small">Open Analytics →</router-link>
           </div>
         </section>
 
@@ -274,21 +332,41 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { useAuthStore } from '../stores/auth'
 import api from '../services/api'
+import { useAccessStore } from '../stores/access'
+import {
+  buildOperatorQuoteRoute,
+  formatOperatorQuoteAge,
+  formatOperatorQuoteBudget,
+  formatOperatorQuoteTravelWindow,
+  formatOperatorQuoteTravelers,
+  getOperatorQuoteState,
+} from '../utils/operatorQuotePresentation'
 
-const authStore = useAuthStore()
+const accessStore = useAccessStore()
 const router = useRouter()
 const quoteRequests = ref([])
 const bookings = ref([])
+const tickets = ref([])
 const loading = ref(true)
 const profile = ref(null)
+const quotesTotal = ref(0)
+const bookingsTotal = ref(0)
+const ticketSummary = ref({ total: 0, open: 0 })
 
 const operatorName = computed(() => profile.value?.business_name || 'Operator')
-const quotesCount = computed(() => quoteRequests.value.length)
+const quotesCount = computed(() => quotesTotal.value)
 const servingAreasCount = computed(() => profile.value?.serving_areas?.length || 0)
 const rating = computed(() => profile.value?.average_rating || 0)
-const bookingsCount = computed(() => bookings.value.length)
+const bookingsCount = computed(() => bookingsTotal.value)
+const openTicketsCount = computed(() => ticketSummary.value.open || 0)
+const canManageTeam = computed(() => accessStore.hasOperatorPermission('operator.team.manage'))
+const canReadQuotes = computed(() => accessStore.hasOperatorPermission('operator.quotes.read'))
+const canReadPromotions = computed(() => accessStore.hasOperatorPermission('operator.promotions.read'))
+const canReadBilling = computed(() => accessStore.hasOperatorPermission('operator.billing.read'))
+const canManageItineraries = computed(() => accessStore.hasOperatorPermission('operator.itineraries.manage'))
+const canManageServingAreas = computed(() => accessStore.hasOperatorPermission('operator.serving_areas.manage'))
+const canReadTickets = computed(() => accessStore.hasOperatorPermission('operator.tickets.read'))
 const responseRate = computed(() => {
   const totalQuotes = quoteRequests.value.length
   if (!totalQuotes) return 0
@@ -340,67 +418,62 @@ const completionRate = computed(() => {
 })
 
 const getQuoteStatus = (quote) => {
-  if (quote.responses?.some(r => r.operator_id === authStore.user._id)) {
-    return 'has-response'
-  }
-  return 'new-quote'
+  return getOperatorQuoteState(quote, profile.value?._id).key === 'responded' ? 'has-response' : 'new-quote'
 }
 
-const getStatusClass = (status) => {
-  return {
-    'open': 'status-open',
-    'closed': 'status-closed'
-  }[status] || 'status-open'
-}
+const getStatusClass = (quote) => getOperatorQuoteState(quote, profile.value?._id).key === 'responded' ? 'status-responded' : 'status-new'
+
+const getStatusLabel = (quote) => getOperatorQuoteState(quote, profile.value?._id).label
 
 const getMatchingLocations = (locations) => {
-  if (!profile.value?.serving_areas) return locations.slice(0, 2)
-  return locations.filter(loc => 
+  if (!profile.value?.serving_areas) return locations.slice(0, 3)
+  const matches = locations.filter(loc => 
     profile.value.serving_areas.some(area => 
       area.area_name.toLowerCase().includes(loc.name.toLowerCase()) ||
       loc.name.toLowerCase().includes(area.area_name.toLowerCase())
     )
-  ).slice(0, 3)
+  )
+  return (matches.length ? matches : locations).slice(0, 3)
 }
 
-const formatTime = (dateString) => {
-  const date = new Date(dateString)
-  const now = new Date()
-  const diff = now - date
-  
-  if (diff < 60000) return 'Just now'
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
-  if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`
-  
-  return date.toLocaleDateString()
-}
+const formatTime = (dateString) => formatOperatorQuoteAge(dateString)
+
+const formatTravelWindow = (travelWindow) => formatOperatorQuoteTravelWindow(travelWindow)
+
+const formatTravelers = (value) => formatOperatorQuoteTravelers(value)
+
+const formatBudget = (value) => formatOperatorQuoteBudget(value)
 
 const markAsRead = async (quoteId) => {
-  await router.push({
-    name: 'OperatorQuoteRequests',
-    query: { quoteId }
-  })
+  await router.push(buildOperatorQuoteRoute(quoteId))
 }
 
-const getQuoteRoute = (quoteId) => ({
-  name: 'OperatorQuoteRequests',
-  query: { quoteId }
-})
+const getQuoteRoute = (quoteId) => buildOperatorQuoteRoute(quoteId)
 
 onMounted(async () => {
   try {
+    await accessStore.loadOperatorContext().catch(() => null)
     // Fetch operator profile
     const profileRes = await api.get('/operators/profile/me')
     profile.value = profileRes.data
 
     // Fetch quote inbox
-    const quotesRes = await api.get('/quotes/inbox')
-    quoteRequests.value = quotesRes.data.quotes || []
+    if (canReadQuotes.value) {
+      const quotesRes = await api.get('/quotes/inbox', { params: { page_size: 6 } })
+      quoteRequests.value = quotesRes.data.quotes || []
+      quotesTotal.value = quotesRes.data.pagination?.total_items || quoteRequests.value.length
+    }
+
+    if (canReadTickets.value) {
+      const ticketsRes = await api.get('/operator/tickets', { params: { page_size: 6 } })
+      tickets.value = ticketsRes.data.tickets || []
+      ticketSummary.value = ticketsRes.data.summary || { total: 0, open: 0 }
+    }
 
     // Fetch booking requests for summary cards
-    const bookingsRes = await api.get('/bookings/my-bookings')
+    const bookingsRes = await api.get('/bookings/my-bookings', { params: { page_size: 6 } })
     bookings.value = bookingsRes.data.bookings || []
+    bookingsTotal.value = bookingsRes.data.pagination?.total_items || bookings.value.length
   } catch (error) {
     console.error('Failed to load operator home data:', error)
     if (error.response) {
@@ -692,12 +765,12 @@ onMounted(async () => {
   letter-spacing: 0.05em;
 }
 
-.status-open {
+.status-new {
   background: #fef3c7;
   color: #b45309;
 }
 
-.status-closed {
+.status-responded {
   background: #dbeafe;
   color: #0369a1;
 }

@@ -1,4 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+import base64
+import csv
+import io
+import json
+import math
+
+from fastapi import APIRouter, Depends, HTTPException, status, Header, Request
+from fastapi.responses import Response
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 from uuid import uuid4
@@ -10,8 +17,11 @@ import logging
 
 from ..database import get_database
 from ..models.admin import AdminCreate, AdminLogin, AdminToken, Admin
+from ..models.promotion import LocationPromotionCreate, LocationPromotionUpdate
 from ..routers.auth import get_current_user
 from ..utils.auth import get_password_hash, verify_password as _verify_password
+from ..utils.audit_events import record_login_security_event, serialize_audit_event
+from ..utils.authorization import ensure_admin_access_context, has_permission, required_permission_for_request
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -23,6 +33,781 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8 hours
 
 # Valid admin roles
 VALID_ADMIN_ROLES = {"super_admin", "admin", "moderator"}
+
+DASHBOARD_WIDGET_LABELS = {
+    "revenue": "Revenue Chart",
+    "bookings": "Bookings Graph",
+    "operators": "Top Operators",
+    "satisfaction": "Satisfaction Scores",
+    "metrics": "Key Metrics",
+}
+
+DASHBOARD_WIDGET_NAME_TO_KEY = {
+    value.casefold(): key for key, value in DASHBOARD_WIDGET_LABELS.items()
+}
+
+
+def _slugify_filename(value: str) -> str:
+    cleaned = "".join(char.lower() if char.isalnum() else "-" for char in value).strip("-")
+    return cleaned or "report"
+
+
+def _dashboard_query(document_id: str) -> dict:
+    try:
+        return {"_id": ObjectId(document_id)}
+    except Exception:
+        return {"_id": document_id}
+
+
+def _normalize_dashboard_widgets(raw_widgets) -> list[dict]:
+    widgets = []
+    for item in raw_widgets or []:
+        if isinstance(item, str):
+            key = item.strip().casefold()
+            name = DASHBOARD_WIDGET_LABELS.get(key, item.strip() or "Custom Widget")
+        elif isinstance(item, dict):
+            raw_key = str(item.get("key") or "").strip().casefold()
+            raw_name = str(item.get("name") or "").strip()
+            key = raw_key or DASHBOARD_WIDGET_NAME_TO_KEY.get(raw_name.casefold(), raw_name.casefold())
+            name = raw_name or DASHBOARD_WIDGET_LABELS.get(key, "Custom Widget")
+        else:
+            continue
+
+        if not key:
+            continue
+        widgets.append({"key": key, "name": DASHBOARD_WIDGET_LABELS.get(key, name)})
+
+    deduped = []
+    seen_keys = set()
+    for widget in widgets:
+        key = widget["key"]
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(widget)
+    return deduped
+
+
+def _serialize_dashboard(document: dict) -> dict:
+    item = dict(document)
+    item["_id"] = str(item["_id"])
+    item["widgets"] = _normalize_dashboard_widgets(item.get("widgets") or [])
+    item["shared_with"] = [str(entry).strip() for entry in item.get("shared_with") or [] if str(entry).strip()]
+    item["description"] = item.get("description") or ""
+    return item
+
+
+def _normalize_location_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned.casefold() if cleaned else None
+
+
+def _coerce_utc_datetime(value):
+    if not isinstance(value, datetime):
+        return value
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _normalize_pagination(page: int, per_page: int, *, maximum_per_page: int = 50) -> tuple[int, int]:
+    safe_page = max(int(page or 1), 1)
+    safe_per_page = min(max(int(per_page or 10), 1), maximum_per_page)
+    return safe_page, safe_per_page
+
+
+def _paginate_items(items: list[dict], page: int, per_page: int) -> tuple[list[dict], dict]:
+    safe_page, safe_per_page = _normalize_pagination(page, per_page)
+    total = len(items)
+    total_pages = max(1, math.ceil(total / safe_per_page)) if safe_per_page else 1
+    current_page = min(safe_page, total_pages)
+    start_index = (current_page - 1) * safe_per_page
+    end_index = start_index + safe_per_page
+    return (
+        items[start_index:end_index],
+        {
+            "page": current_page,
+            "perPage": safe_per_page,
+            "total": total,
+            "totalPages": total_pages,
+            "hasPrev": current_page > 1,
+            "hasNext": current_page < total_pages,
+        },
+    )
+
+
+def _parse_filter_date(value: str | None, *, end_of_day: bool = False) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).strip())
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    if end_of_day:
+        parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
+    else:
+        parsed = parsed.replace(hour=0, minute=0, second=0, microsecond=0)
+    return parsed
+
+
+def _request_ip(request: Request | None) -> str:
+    if request and request.client and request.client.host:
+        return request.client.host
+    return "N/A"
+
+
+def _build_audit_search_query(fields: list[str], search_value: str) -> dict:
+    normalized_search = search_value.strip()
+    if not normalized_search:
+        return {}
+    return {"$or": [{field: {"$regex": normalized_search, "$options": "i"}} for field in fields]}
+
+
+async def _paginate_audit_events(collection, *, filters: dict, page: int, per_page: int) -> tuple[list[dict], dict]:
+    safe_page, safe_per_page = _normalize_pagination(page, per_page)
+    total = await collection.count_documents(filters)
+    total_pages = max(1, math.ceil(total / safe_per_page)) if safe_per_page else 1
+    current_page = min(safe_page, total_pages)
+    documents = await collection.find(filters).sort("timestamp", -1).skip((current_page - 1) * safe_per_page).limit(safe_per_page).to_list(length=safe_per_page)
+    return (
+        [serialize_audit_event(document) for document in documents],
+        {
+            "page": current_page,
+            "perPage": safe_per_page,
+            "total": total,
+            "totalPages": total_pages,
+            "hasPrev": current_page > 1,
+            "hasNext": current_page < total_pages,
+        },
+    )
+
+
+def _encode_datetime_object_cursor(*, created_at: datetime, document_id: ObjectId) -> str:
+    normalized_created_at = _coerce_utc_datetime(created_at)
+    payload = {
+        "created_at": normalized_created_at.isoformat(),
+        "document_id": str(document_id),
+    }
+    return base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("ascii")
+
+
+def _decode_datetime_object_cursor(cursor: str) -> tuple[datetime, ObjectId]:
+    try:
+        decoded = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+        payload = json.loads(decoded)
+        created_at = _coerce_utc_datetime(datetime.fromisoformat(payload["created_at"]))
+        document_id = ObjectId(payload["document_id"])
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from exc
+    return created_at, document_id
+
+
+def _build_normalized_location_scope(scope: dict) -> dict:
+    return {
+        "area_name": _normalize_location_value(scope.get("area_name")),
+        "state": _normalize_location_value(scope.get("state")),
+        "country": _normalize_location_value(scope.get("country")),
+    }
+
+
+def _area_matches_scope(area: dict, scope: dict) -> bool:
+    if scope.get("area_name") and _normalize_location_value(area.get("area_name")) != _normalize_location_value(scope.get("area_name")):
+        return False
+    if scope.get("state") and _normalize_location_value(area.get("state")) != _normalize_location_value(scope.get("state")):
+        return False
+    if scope.get("country") and _normalize_location_value(area.get("country")) != _normalize_location_value(scope.get("country")):
+        return False
+    return True
+
+
+def _operator_supports_scope(profile: dict, scope: dict) -> bool:
+    return any(_area_matches_scope(area, scope) for area in profile.get("serving_areas", []))
+
+
+def _valid_object_ids(values: set[str] | list[str]) -> list[ObjectId]:
+    object_ids: list[ObjectId] = []
+    for value in values:
+        try:
+            object_ids.append(ObjectId(value))
+        except Exception:
+            continue
+    return object_ids
+
+
+async def _load_users_by_id(db, user_ids: set[str] | list[str]) -> dict[str, dict]:
+    object_ids = _valid_object_ids(user_ids)
+    if not object_ids:
+        return {}
+    users = await db.users.find(
+        {"_id": {"$in": object_ids}},
+        {"full_name": 1, "email": 1, "user_type": 1, "created_at": 1, "updated_at": 1, "last_login": 1, "is_active": 1},
+    ).to_list(length=len(object_ids))
+    return {str(user["_id"]): user for user in users}
+
+
+async def _load_operator_profiles_by_id(db, profile_ids: set[str] | list[str]) -> dict[str, dict]:
+    object_ids = _valid_object_ids(profile_ids)
+    if not object_ids:
+        return {}
+    profiles = await db.operator_profiles.find(
+        {"_id": {"$in": object_ids}},
+        {"business_name": 1},
+    ).to_list(length=len(object_ids))
+    return {str(profile["_id"]): profile for profile in profiles}
+
+
+def _default_admin_report_items(*, now: datetime, admin: dict) -> list[dict]:
+    return [
+        {
+            "_id": "report-revenue-current-month",
+            "name": f"Revenue Analysis - {now.strftime('%b %Y')}",
+            "type": "revenue",
+            "status": "completed",
+            "size": "1.9 MB",
+            "generated_by": "System",
+            "created_at": now - timedelta(days=2),
+            "updated_at": now - timedelta(days=1),
+        },
+        {
+            "_id": "report-operator-performance",
+            "name": "Operator Performance Snapshot",
+            "type": "operators",
+            "status": "completed",
+            "size": "1.2 MB",
+            "generated_by": "System",
+            "created_at": now - timedelta(days=3),
+            "updated_at": now - timedelta(days=2),
+        },
+        {
+            "_id": "report-booking-trends",
+            "name": "Booking Trends Summary",
+            "type": "bookings",
+            "status": "completed",
+            "size": "1.4 MB",
+            "generated_by": admin.get("full_name", "Admin User"),
+            "created_at": now - timedelta(days=4),
+            "updated_at": now - timedelta(days=3),
+        },
+        {
+            "_id": "report-customer-acquisition",
+            "name": "Customer Acquisition Overview",
+            "type": "customers",
+            "status": "draft",
+            "size": "0.6 MB",
+            "generated_by": admin.get("full_name", "Admin User"),
+            "created_at": now - timedelta(days=1),
+            "updated_at": now - timedelta(hours=12),
+        },
+    ]
+
+
+async def _find_admin_report(db, report_id: str, admin: dict) -> dict:
+    report = None
+    try:
+        report = await db.admin_reports.find_one({"_id": ObjectId(report_id)})
+    except Exception:
+        report = None
+
+    if report is None:
+        report = await db.admin_reports.find_one({"_id": report_id})
+
+    if report is not None:
+        report["_id"] = str(report["_id"])
+        return report
+
+    now = datetime.now(timezone.utc)
+    for item in _default_admin_report_items(now=now, admin=admin):
+        if item["_id"] == report_id:
+            return item
+
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+
+
+async def _build_admin_report_payload(db, report: dict) -> dict:
+    now = datetime.now(timezone.utc)
+    report_type = str(report.get("type") or "general").lower()
+
+    total_quotes = await db.quote_requests.count_documents({})
+    closed_quotes = await db.quote_requests.count_documents({"status": "closed"})
+    total_bookings = await db.bookings.count_documents({})
+    completed_bookings = await db.bookings.count_documents({"booking_status.status": "completed"})
+    total_tourists = await db.users.count_documents({"user_type": "tourist"})
+    total_operators = await db.operator_profiles.count_documents({})
+
+    sections = []
+    summary = "Operational report generated from current admin metrics."
+
+    if report_type == "revenue":
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        revenue_rows = await db.bookings.aggregate(
+            [
+                {"$match": {"booking_status.status": "completed"}},
+                {
+                    "$project": {
+                        "amount": {"$ifNull": ["$final_cost", "$estimated_cost"]},
+                        "created_at": 1,
+                    }
+                },
+                {"$match": {"amount": {"$gt": 0}}},
+                {
+                    "$group": {
+                        "_id": None,
+                        "total_revenue": {"$sum": "$amount"},
+                        "monthly_revenue": {
+                            "$sum": {
+                                "$cond": [{"$gte": ["$created_at", month_start]}, "$amount", 0]
+                            }
+                        },
+                        "transaction_count": {"$sum": 1},
+                    }
+                },
+            ]
+        ).to_list(length=1)
+        revenue_stats = revenue_rows[0] if revenue_rows else {}
+        total_revenue = float(revenue_stats.get("total_revenue", 0) or 0)
+        monthly_revenue = float(revenue_stats.get("monthly_revenue", 0) or 0)
+        transaction_count = int(revenue_stats.get("transaction_count", 0) or 0)
+        summary = "Revenue snapshot based on completed bookings and current month activity."
+        sections.append(
+            {
+                "title": "Key Metrics",
+                "kind": "stats",
+                "items": [
+                    {"label": "Total revenue", "value": round(total_revenue, 2)},
+                    {"label": "Monthly revenue", "value": round(monthly_revenue, 2)},
+                    {"label": "Completed bookings", "value": completed_bookings},
+                    {"label": "Average transaction", "value": round(total_revenue / transaction_count, 2) if transaction_count else 0},
+                ],
+            }
+        )
+    elif report_type == "operators":
+        operator_rows = await db.bookings.aggregate(
+            [
+                {"$match": {"operator_id": {"$exists": True, "$ne": None}, "booking_status.status": {"$in": ["completed", "confirmed"]}}},
+                {"$group": {"_id": "$operator_id", "bookings": {"$sum": 1}}},
+                {"$sort": {"bookings": -1}},
+                {"$limit": 5},
+            ]
+        ).to_list(length=5)
+        profiles = await _load_operator_profiles_by_id(db, {str(item.get("_id")) for item in operator_rows})
+        summary = "Operator activity snapshot based on assigned completed and confirmed bookings."
+        sections.append(
+            {
+                "title": "Key Metrics",
+                "kind": "stats",
+                "items": [
+                    {"label": "Operator profiles", "value": total_operators},
+                    {"label": "Completed bookings", "value": completed_bookings},
+                    {"label": "Closed quotes", "value": closed_quotes},
+                ],
+            }
+        )
+        sections.append(
+            {
+                "title": "Top operators",
+                "kind": "table",
+                "columns": ["Operator", "Bookings"],
+                "rows": [
+                    [
+                        profiles.get(str(item.get("_id")), {}).get("business_name", "Unknown operator"),
+                        int(item.get("bookings", 0) or 0),
+                    ]
+                    for item in operator_rows
+                ],
+            }
+        )
+    elif report_type == "bookings":
+        pending_bookings = await db.bookings.count_documents({"booking_status.status": {"$in": ["pending", "confirmed"]}})
+        cancelled_bookings = await db.bookings.count_documents({"booking_status.status": "cancelled"})
+        summary = "Booking flow summary across total, completed, pending, and cancelled states."
+        sections.append(
+            {
+                "title": "Key Metrics",
+                "kind": "stats",
+                "items": [
+                    {"label": "Total bookings", "value": total_bookings},
+                    {"label": "Completed", "value": completed_bookings},
+                    {"label": "Pending or confirmed", "value": pending_bookings},
+                    {"label": "Cancelled", "value": cancelled_bookings},
+                ],
+            }
+        )
+    elif report_type == "customers":
+        recent_cutoff = now - timedelta(days=30)
+        new_tourists = await db.users.count_documents({"user_type": "tourist", "created_at": {"$gte": recent_cutoff}})
+        summary = "Customer acquisition summary based on tourist registrations and quote activity."
+        sections.append(
+            {
+                "title": "Key Metrics",
+                "kind": "stats",
+                "items": [
+                    {"label": "Total tourists", "value": total_tourists},
+                    {"label": "New tourists (30d)", "value": new_tourists},
+                    {"label": "Total quotes", "value": total_quotes},
+                    {"label": "Closed quotes", "value": closed_quotes},
+                ],
+            }
+        )
+    else:
+        sections.append(
+            {
+                "title": "Key Metrics",
+                "kind": "stats",
+                "items": [
+                    {"label": "Total quotes", "value": total_quotes},
+                    {"label": "Total bookings", "value": total_bookings},
+                    {"label": "Total operators", "value": total_operators},
+                    {"label": "Total tourists", "value": total_tourists},
+                ],
+            }
+        )
+
+    return {
+        "report": report,
+        "generated_at": now,
+        "summary": summary,
+        "sections": sections,
+    }
+
+
+def _report_payload_to_csv(payload: dict) -> str:
+    output = io.StringIO()
+    writer = csv.writer(output)
+    report = payload.get("report") or {}
+
+    writer.writerow(["Report", report.get("name", "Unknown")])
+    writer.writerow(["Type", report.get("type", "general")])
+    writer.writerow(["Status", report.get("status", "unknown")])
+    writer.writerow(["Generated At", payload.get("generated_at")])
+    writer.writerow([])
+
+    for section in payload.get("sections", []):
+        writer.writerow([section.get("title", "Section")])
+        if section.get("kind") == "stats":
+            writer.writerow(["Label", "Value"])
+            for item in section.get("items", []):
+                writer.writerow([item.get("label", ""), item.get("value", "")])
+        elif section.get("kind") == "table":
+            writer.writerow(section.get("columns", []))
+            for row in section.get("rows", []):
+                writer.writerow(row)
+        writer.writerow([])
+
+    return output.getvalue()
+
+
+def _report_payload_to_text_lines(payload: dict) -> list[str]:
+    report = payload.get("report") or {}
+    lines = [
+        report.get("name", "Report"),
+        f"Type: {report.get('type', 'general')}",
+        f"Status: {report.get('status', 'unknown')}",
+        f"Generated by: {report.get('generated_by', 'Unknown')}",
+        f"Generated at: {payload.get('generated_at')}",
+        "",
+        payload.get("summary", ""),
+        "",
+    ]
+
+    for section in payload.get("sections", []):
+        lines.append(section.get("title", "Section"))
+        if section.get("kind") == "stats":
+            for item in section.get("items", []):
+                lines.append(f"- {item.get('label', '')}: {item.get('value', '')}")
+        elif section.get("kind") == "table":
+            columns = section.get("columns", [])
+            if columns:
+                lines.append(" | ".join(str(column) for column in columns))
+            for row in section.get("rows", []):
+                lines.append(" | ".join(str(cell) for cell in row))
+        lines.append("")
+
+    return lines
+
+
+def _render_text_pdf(lines: list[str]) -> bytes:
+    safe_lines = [str(line) for line in lines if line is not None]
+
+    def _escape_pdf_text(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    content_lines = ["BT", "/F1 12 Tf", "50 780 Td", "14 TL"]
+    first_line = True
+    for line in safe_lines:
+        escaped = _escape_pdf_text(line)
+        if first_line:
+            content_lines.append(f"({escaped}) Tj")
+            first_line = False
+        else:
+            content_lines.append(f"T* ({escaped}) Tj")
+    content_lines.append("ET")
+    stream = "\n".join(content_lines).encode("latin-1", errors="replace")
+
+    objects = [
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
+        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
+        b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj\n",
+        b"4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n",
+        f"5 0 obj << /Length {len(stream)} >> stream\n".encode("ascii") + stream + b"\nendstream endobj\n",
+    ]
+
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for obj in objects:
+        offsets.append(len(pdf))
+        pdf.extend(obj)
+
+    xref_offset = len(pdf)
+    pdf.extend(f"xref\n0 {len(offsets)}\n".encode("ascii"))
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    pdf.extend(
+        f"trailer << /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF".encode("ascii")
+    )
+    return bytes(pdf)
+
+
+async def _load_operator_response_stats(db, operator_profile_ids: set[str] | list[str]) -> dict[str, dict]:
+    profile_ids = [profile_id for profile_id in operator_profile_ids if profile_id]
+    if not profile_ids:
+        return {}
+
+    thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    stats_rows = await db.quote_requests.aggregate(
+        [
+            {"$match": {"responses.0": {"$exists": True}}},
+            {"$unwind": "$responses"},
+            {"$match": {"responses.operator_id": {"$in": profile_ids}}},
+            {
+                "$project": {
+                    "operator_id": "$responses.operator_id",
+                    "quote_created_at": "$created_at",
+                    "response_created_at": {"$ifNull": ["$responses.created_at", "$created_at"]},
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$operator_id",
+                    "total_responses": {"$sum": 1},
+                    "recent_responses_30d": {
+                        "$sum": {
+                            "$cond": [{"$gte": ["$response_created_at", thirty_days_ago]}, 1, 0]
+                        }
+                    },
+                    "average_response_time_ms": {
+                        "$avg": {"$subtract": ["$response_created_at", "$quote_created_at"]}
+                    },
+                }
+            },
+        ]
+    ).to_list(length=None)
+
+    stats_by_profile: dict[str, dict] = {}
+    for row in stats_rows:
+        average_response_time_ms = row.get("average_response_time_ms") or 0
+        stats_by_profile[row["_id"]] = {
+            "total_responses": row.get("total_responses", 0),
+            "recent_responses_30d": row.get("recent_responses_30d", 0),
+            "avg_response_time_hours": round(average_response_time_ms / 3600000, 2),
+        }
+    return stats_by_profile
+
+
+async def _load_admin_operator_performance_rows(db) -> list[dict]:
+    operator_docs = await db.users.aggregate(
+        [
+            {"$match": {"user_type": "operator"}},
+            {"$addFields": {"_user_id_str": {"$toString": "$_id"}}},
+            {
+                "$lookup": {
+                    "from": "operator_profiles",
+                    "let": {"user_id_str": "$_user_id_str"},
+                    "pipeline": [
+                        {"$match": {"$expr": {"$eq": ["$user_id", "$$user_id_str"]}}},
+                        {
+                            "$project": {
+                                "business_name": 1,
+                                "description": 1,
+                                "years_of_experience": 1,
+                                "average_rating": 1,
+                                "total_reviews": 1,
+                                "specializations": 1,
+                                "serving_areas": 1,
+                            }
+                        },
+                    ],
+                    "as": "profile_docs",
+                }
+            },
+            {"$unwind": {"path": "$profile_docs", "preserveNullAndEmptyArrays": True}},
+        ]
+    ).to_list(length=None)
+
+    profile_ids = [
+        str(operator["profile_docs"]["_id"])
+        for operator in operator_docs
+        if operator.get("profile_docs") and operator["profile_docs"].get("_id")
+    ]
+    response_stats_by_profile = await _load_operator_response_stats(db, profile_ids)
+
+    rows = []
+    for operator in operator_docs:
+        profile_doc = operator.get("profile_docs")
+        profile_id = str(profile_doc["_id"]) if profile_doc and profile_doc.get("_id") else None
+        average_rating = profile_doc.get("average_rating", 0) if profile_doc else 0
+        response_stats = response_stats_by_profile.get(profile_id or "", {})
+
+        row = {
+            "_id": str(operator["_id"]),
+            "email": operator.get("email"),
+            "full_name": operator.get("full_name"),
+            "phone": operator.get("phone"),
+            "user_type": operator.get("user_type"),
+            "is_active": operator.get("is_active", False),
+            "created_at": operator.get("created_at"),
+            "updated_at": operator.get("updated_at"),
+            "profile": None,
+            "serving_areas_count": 0,
+            "avg_rating": average_rating,
+            "total_responses": response_stats.get("total_responses", 0),
+            "recent_responses_30d": response_stats.get("recent_responses_30d", 0),
+            "avg_response_time_hours": response_stats.get("avg_response_time_hours", 0),
+            "response_rate": round((average_rating / 5 * 100) if average_rating else 0, 2),
+        }
+
+        if profile_doc:
+            row["profile"] = {
+                "_id": profile_id,
+                "business_name": profile_doc.get("business_name"),
+                "description": profile_doc.get("description"),
+                "years_of_experience": profile_doc.get("years_of_experience", 0),
+                "average_rating": average_rating,
+                "total_reviews": profile_doc.get("total_reviews", 0),
+                "specializations": profile_doc.get("specializations", []),
+                "serving_areas": profile_doc.get("serving_areas", []),
+            }
+            row["serving_areas_count"] = len(profile_doc.get("serving_areas", []))
+
+        rows.append(row)
+
+    return rows
+
+
+def _sort_operator_performance_rows(rows: list[dict], sort_by: str) -> list[dict]:
+    default_datetime = datetime.min.replace(tzinfo=timezone.utc)
+
+    if sort_by == "responses":
+        return sorted(
+            rows,
+            key=lambda row: (
+                row.get("total_responses", 0),
+                row.get("avg_rating", 0),
+                _coerce_utc_datetime(row.get("created_at")) or default_datetime,
+                row.get("_id", ""),
+            ),
+            reverse=True,
+        )
+
+    if sort_by == "response_time":
+        return sorted(
+            rows,
+            key=lambda row: (
+                row.get("avg_response_time_hours", 0) if row.get("total_responses", 0) else float("inf"),
+                -(row.get("total_responses", 0)),
+                -(row.get("avg_rating", 0)),
+                row.get("_id", ""),
+            ),
+        )
+
+    if sort_by == "experience":
+        return sorted(
+            rows,
+            key=lambda row: (
+                (row.get("profile") or {}).get("years_of_experience", 0),
+                row.get("avg_rating", 0),
+                row.get("total_responses", 0),
+                _coerce_utc_datetime(row.get("created_at")) or default_datetime,
+                row.get("_id", ""),
+            ),
+            reverse=True,
+        )
+
+    if sort_by == "specializations":
+        return sorted(
+            rows,
+            key=lambda row: (
+                len((row.get("profile") or {}).get("specializations", [])),
+                row.get("avg_rating", 0),
+                row.get("total_responses", 0),
+                _coerce_utc_datetime(row.get("created_at")) or default_datetime,
+                row.get("_id", ""),
+            ),
+            reverse=True,
+        )
+
+    return sorted(
+        rows,
+        key=lambda row: (
+            row.get("avg_rating", 0),
+            row.get("total_responses", 0),
+            (row.get("profile") or {}).get("total_reviews", 0),
+            _coerce_utc_datetime(row.get("created_at")) or default_datetime,
+            row.get("_id", ""),
+        ),
+        reverse=True,
+    )
+
+
+async def _validate_location_promotion_payload(db, payload: dict, *, existing: dict | None = None):
+    operator_profile_id = payload.get("operator_profile_id") or (existing or {}).get("operator_profile_id")
+
+    try:
+        operator_profile = await db.operator_profiles.find_one({"_id": ObjectId(operator_profile_id)})
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid operator_profile_id") from exc
+
+    if not operator_profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Operator profile not found")
+
+    scope = payload.get("location_scope") or (existing or {}).get("location_scope")
+    if not scope:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="location_scope is required")
+
+    if not _operator_supports_scope(operator_profile, scope):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Operator does not serve the requested promotion location",
+        )
+
+    service_type = payload.get("service_type") if "service_type" in payload else (existing or {}).get("service_type")
+    if service_type and service_type not in operator_profile.get("service_types", ["tour"]):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Operator does not support the requested service type",
+        )
+
+    start_at = payload.get("start_at") if "start_at" in payload else (existing or {}).get("start_at")
+    end_at = payload.get("end_at") if "end_at" in payload else (existing or {}).get("end_at")
+    if start_at and end_at and end_at <= start_at:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="end_at must be after start_at")
+
+    return operator_profile
+
+
+def _serialize_promotion(promotion: dict, *, operator_profile: dict | None = None) -> dict:
+    promotion["_id"] = str(promotion["_id"])
+    if operator_profile:
+        promotion["operator_profile"] = {
+            "_id": str(operator_profile["_id"]),
+            "business_name": operator_profile.get("business_name"),
+            "service_types": operator_profile.get("service_types", ["tour"]),
+        }
+    return promotion
 
 
 async def get_token_from_header(authorization: str = Header(None)) -> str:
@@ -70,7 +855,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     return encoded_jwt
 
 
-async def get_current_admin(token: str = Depends(get_token_from_header)) -> dict:
+async def get_current_admin(request: Request, token: str = Depends(get_token_from_header)) -> dict:
     """
     Verify admin token and return admin data with full validation.
     
@@ -135,7 +920,26 @@ async def get_current_admin(token: str = Depends(get_token_from_header)) -> dict
     
 
     admin["_id"] = str(admin["_id"])
+    request.state.admin = admin
+    context = await ensure_admin_access_context(db, admin=admin)
+    request.state.admin_access_context = context
+    permission = required_permission_for_request(
+        principal_type="admin",
+        path=request.url.path,
+        method=request.method,
+    )
+    if permission and not has_permission(set(context["permissions"]), permission):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin does not have access to this section")
     return admin
+
+
+async def get_current_admin_access_context(request: Request, admin: dict = Depends(get_current_admin)) -> dict:
+    context = getattr(request.state, "admin_access_context", None)
+    if context is None:
+        db = await get_database()
+        context = await ensure_admin_access_context(db, admin=admin)
+        request.state.admin_access_context = context
+    return context
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
@@ -216,7 +1020,7 @@ async def register_admin(admin_data: AdminCreate, admin: dict = Depends(get_curr
 
 
 @router.post("/login")
-async def admin_login(credentials: AdminLogin):
+async def admin_login(credentials: AdminLogin, request: Request):
     """
     Admin login endpoint with security logging.
     Returns access token with 8-hour expiration and admin info.
@@ -224,10 +1028,22 @@ async def admin_login(credentials: AdminLogin):
     """
     db = await get_database()
     
-    admin = await db.admins.find_one({"email": credentials.email})
+    email = credentials.email.strip().casefold()
+    admin = await db.admins.find_one({"email": email})
     
     if not admin:
         logger.warning(f"Login attempt with non-existent email: {credentials.email}")
+        await record_login_security_event(
+            db,
+            principal_type="admin",
+            email=email,
+            outcome="invalid_credentials",
+            ip_address=_request_ip(request),
+            location="Admin Console",
+            user_name=email,
+            description=f"Invalid admin credentials for {email}",
+            threshold_enabled=False,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
@@ -235,6 +1051,19 @@ async def admin_login(credentials: AdminLogin):
     
     if not admin.get("is_active"):
         logger.warning(f"Login attempt by inactive admin: {admin.get('_id')}")
+        await record_login_security_event(
+            db,
+            principal_type="admin",
+            email=email,
+            outcome="inactive_account",
+            ip_address=_request_ip(request),
+            location="Admin Console",
+            user_name=admin.get("full_name") or email,
+            user_id=str(admin.get("_id")),
+            description=f"Login attempt against inactive admin account {email}",
+            remediation="Review admin status before retrying authentication.",
+            threshold_enabled=False,
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin account is inactive"
@@ -242,6 +1071,18 @@ async def admin_login(credentials: AdminLogin):
     
     if not verify_password(credentials.password, admin.get("hashed_password", "")):
         logger.warning(f"Failed login attempt for admin: {admin.get('_id')}")
+        await record_login_security_event(
+            db,
+            principal_type="admin",
+            email=email,
+            outcome="invalid_credentials",
+            ip_address=_request_ip(request),
+            location="Admin Console",
+            user_name=admin.get("full_name") or email,
+            user_id=str(admin.get("_id")),
+            description=f"Invalid admin credentials for {email}",
+            threshold_enabled=False,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
@@ -256,6 +1097,19 @@ async def admin_login(credentials: AdminLogin):
         logger.info(f"Successful login for admin: {admin.get('_id')}")
     except Exception as e:
         logger.error(f"Error updating last_login: {str(e)}")
+
+    await record_login_security_event(
+        db,
+        principal_type="admin",
+        email=email,
+        outcome="success",
+        ip_address=_request_ip(request),
+        location="Admin Console",
+        user_name=admin.get("full_name") or email,
+        user_id=str(admin.get("_id")),
+        description=f"Successful admin login for {email}",
+        threshold_enabled=False,
+    )
     
     # Create access token
     access_token = create_access_token(data={"sub": str(admin["_id"])})
@@ -391,6 +1245,9 @@ async def get_dashboard_stats(admin: dict = Depends(get_current_admin)):
     
     # Operator statistics
     total_operator_profiles = await db.operator_profiles.count_documents({})
+    total_tickets = await db.support_tickets.count_documents({})
+    open_tickets = await db.support_tickets.count_documents({"status": {"$in": ["open", "acknowledged", "in_progress"]}})
+    completed_tickets = await db.support_tickets.count_documents({"status": "completed"})
     
     # Get average operator rating
     pipeline = [
@@ -417,6 +1274,11 @@ async def get_dashboard_stats(admin: dict = Depends(get_current_admin)):
         "operators": {
             "total_profiles": total_operator_profiles,
             "avg_rating": round(avg_operator_rating, 2)
+        },
+        "tickets": {
+            "total": total_tickets,
+            "open": open_tickets,
+            "completed": completed_tickets,
         }
     }
 
@@ -546,9 +1408,10 @@ async def get_response_times(admin: dict = Depends(get_current_admin)):
 
 @router.get("/tourists")
 async def get_all_tourists(
-    skip: int = 0,
     limit: int = 50,
+    cursor: str | None = None,
     search: str = "",
+    status_filter: str | None = None,
     admin: dict = Depends(get_current_admin)
 ):
     """Get all tourists with pagination and search"""
@@ -562,88 +1425,342 @@ async def get_all_tourists(
             {"email": {"$regex": search, "$options": "i"}},
             {"phone": {"$regex": search, "$options": "i"}}
         ]
+    if status_filter == "active":
+        query["is_active"] = True
+    elif status_filter == "inactive":
+        query["is_active"] = False
     
     # Get total count
     total = await db.users.count_documents(query)
     
-    # Get paginated results
+    cursor_match = None
+    if cursor:
+        cursor_created_at, cursor_document_id = _decode_datetime_object_cursor(cursor)
+        cursor_match = {
+            "$or": [
+                {"created_at": {"$lt": cursor_created_at}},
+                {"created_at": cursor_created_at, "_id": {"$lt": cursor_document_id}},
+            ]
+        }
+
+    effective_query = dict(query)
+    if cursor_match:
+        effective_query["$and"] = [cursor_match]
+
+    tourist_docs = await db.users.find(effective_query).sort([("created_at", -1), ("_id", -1)]).limit(limit + 1).to_list(length=limit + 1)
+    has_more = len(tourist_docs) > limit
+    tourist_docs = tourist_docs[:limit]
+    tourist_ids = [str(tourist["_id"]) for tourist in tourist_docs]
+    quote_counts = await db.quote_requests.aggregate(
+        [
+            {"$match": {"tourist_id": {"$in": tourist_ids}}},
+            {"$group": {"_id": "$tourist_id", "count": {"$sum": 1}}},
+        ]
+    ).to_list(length=None)
+    quote_count_by_tourist = {row["_id"]: row["count"] for row in quote_counts}
+
     tourists = []
-    cursor = db.users.find(query).skip(skip).limit(limit).sort("created_at", -1)
-    async for tourist in cursor:
-        # Count quotes posted
-        quotes_count = await db.quote_requests.count_documents({"tourist_id": str(tourist["_id"])})
-        
+    for tourist in tourist_docs:
         tourist["_id"] = str(tourist["_id"])
-        tourist["quotes_posted"] = quotes_count
+        tourist["quotes_posted"] = quote_count_by_tourist.get(tourist["_id"], 0)
         tourists.append(tourist)
+
+    next_cursor = None
+    if has_more and tourist_docs:
+        last_tourist = tourist_docs[-1]
+        next_cursor = _encode_datetime_object_cursor(created_at=last_tourist["created_at"], document_id=last_tourist["_id"])
+
+    total_pages = max(1, (total + limit - 1) // limit)
     
     return {
         "tourists": tourists,
-        "total": total,
-        "skip": skip,
-        "limit": limit
+        "pagination": {
+            "page_size": limit,
+            "total_items": total,
+            "total_pages": total_pages,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        }
     }
 
 
 @router.get("/operators")
 async def get_all_operators(
-    skip: int = 0,
     limit: int = 50,
+    cursor: str | None = None,
     search: str = "",
+    rating_filter: str = "",
     admin: dict = Depends(get_current_admin)
 ):
     """Get all operators with pagination and search"""
     db = await get_database()
     
     # Build search query for operators
-    query = {"user_type": "operator"}
+    base_query = {"user_type": "operator"}
+    base_query_filters = []
     if search:
-        query["$or"] = [
+        base_query_filters.append({"$or": [
             {"full_name": {"$regex": search, "$options": "i"}},
             {"email": {"$regex": search, "$options": "i"}},
             {"phone": {"$regex": search, "$options": "i"}}
+        ]})
+    if base_query_filters:
+        base_query["$and"] = base_query_filters
+
+    paged_query = dict(base_query)
+    paged_query_filters = list(base_query_filters)
+    if cursor:
+        cursor_created_at, cursor_document_id = _decode_datetime_object_cursor(cursor)
+        paged_query_filters.append({"$or": [
+            {"created_at": {"$lt": cursor_created_at}},
+            {"created_at": cursor_created_at, "_id": {"$lt": cursor_document_id}},
+        ]})
+    if paged_query_filters:
+        paged_query["$and"] = paged_query_filters
+
+    base_operator_pipeline = [
+        {"$match": base_query},
+        {"$addFields": {"_user_id_str": {"$toString": "$_id"}}},
+        {
+            "$lookup": {
+                "from": "operator_profiles",
+                "let": {"user_id_str": "$_user_id_str"},
+                "pipeline": [
+                    {"$match": {"$expr": {"$eq": ["$user_id", "$$user_id_str"]}}},
+                    {
+                        "$project": {
+                            "business_name": 1,
+                            "description": 1,
+                            "years_of_experience": 1,
+                            "average_rating": 1,
+                            "total_reviews": 1,
+                            "specializations": 1,
+                            "serving_areas": 1,
+                        }
+                    },
+                ],
+                "as": "profile_docs",
+            }
+        },
+        {"$unwind": {"path": "$profile_docs", "preserveNullAndEmptyArrays": True}},
+    ]
+
+    operator_pipeline = [{"$match": paged_query}, *base_operator_pipeline[1:]]
+
+    rating_match = None
+    if rating_filter == "4":
+        rating_match = {"profile_docs.average_rating": {"$gte": 4}}
+    elif rating_filter == "3":
+        rating_match = {"profile_docs.average_rating": {"$gte": 3, "$lt": 4}}
+    elif rating_filter == "below3":
+        rating_match = {"$or": [{"profile_docs.average_rating": {"$lt": 3}}, {"profile_docs.average_rating": {"$exists": False}}]}
+
+    if rating_match:
+        base_operator_pipeline.append({"$match": rating_match})
+        operator_pipeline.append({"$match": rating_match})
+
+    total_rows = await db.users.aggregate(base_operator_pipeline + [{"$count": "total"}]).to_list(length=1)
+    total = total_rows[0]["total"] if total_rows else 0
+
+    operator_docs = await db.users.aggregate(
+        operator_pipeline
+        + [
+            {"$sort": {"created_at": -1, "_id": -1}},
+            {"$limit": limit + 1},
         ]
-    
-    # Get total count
-    total = await db.users.count_documents(query)
-    
-    # Get paginated results
+    ).to_list(length=limit + 1)
+
+    has_more = len(operator_docs) > limit
+    visible_operator_docs = operator_docs[:limit]
+
+    profile_ids = [str(operator["profile_docs"]["_id"]) for operator in visible_operator_docs if operator.get("profile_docs") and operator["profile_docs"].get("_id")]
+    response_counts = await db.quote_requests.aggregate(
+        [
+            {"$unwind": "$responses"},
+            {"$match": {"responses.operator_id": {"$in": profile_ids}}},
+            {"$group": {"_id": "$responses.operator_id", "count": {"$sum": 1}}},
+        ]
+    ).to_list(length=None)
+    response_count_by_operator = {row["_id"]: row["count"] for row in response_counts}
+
     operators = []
-    cursor = db.users.find(query).skip(skip).limit(limit).sort("created_at", -1)
-    async for operator in cursor:
-        operator_profile = await db.operator_profiles.find_one({"user_id": str(operator["_id"])})
-        
-        operator["_id"] = str(operator["_id"])
+    for operator in visible_operator_docs:
+        profile_doc = operator.get("profile_docs")
+        operator_id = str(operator["_id"])
+        profile_id = str(profile_doc["_id"]) if profile_doc and profile_doc.get("_id") else None
+        operator["_id"] = operator_id
         operator["profile"] = None
         operator["serving_areas_count"] = 0
         operator["quotes_responded"] = 0
         operator["avg_rating"] = 0
-        
-        if operator_profile:
+
+        if profile_doc:
             operator["profile"] = {
-                "_id": str(operator_profile["_id"]),
-                "business_name": operator_profile.get("business_name"),
-                "description": operator_profile.get("description"),
-                "years_of_experience": operator_profile.get("years_of_experience"),
-                "average_rating": operator_profile.get("average_rating", 0)
+                "_id": profile_id,
+                "business_name": profile_doc.get("business_name"),
+                "description": profile_doc.get("description"),
+                "years_of_experience": profile_doc.get("years_of_experience"),
+                "average_rating": profile_doc.get("average_rating", 0),
+                "total_reviews": profile_doc.get("total_reviews", 0),
+                "specializations": profile_doc.get("specializations", []),
             }
-            operator["serving_areas_count"] = len(operator_profile.get("serving_areas", []))
-            operator["avg_rating"] = operator_profile.get("average_rating", 0)
-            
-            # Count responses
-            responses_count = 0
-            async for quote in db.quote_requests.find({}):
-                responses_count += sum(1 for r in quote.get("responses", []) if r.get("operator_id") == str(operator_profile["_id"]))
-            operator["quotes_responded"] = responses_count
-        
+            operator["serving_areas_count"] = len(profile_doc.get("serving_areas", []))
+            operator["avg_rating"] = profile_doc.get("average_rating", 0)
+            operator["quotes_responded"] = response_count_by_operator.get(profile_id, 0)
+
+        operator.pop("profile_docs", None)
+        operator.pop("_user_id_str", None)
         operators.append(operator)
+
+    total_pages = max(1, math.ceil(total / limit)) if limit else 1
+    next_cursor = None
+    if has_more and visible_operator_docs:
+        last_operator = visible_operator_docs[-1]
+        next_cursor = _encode_datetime_object_cursor(
+            created_at=last_operator["created_at"],
+            document_id=last_operator["_id"],
+        )
     
     return {
         "operators": operators,
         "total": total,
-        "skip": skip,
-        "limit": limit
+        "pagination": {
+            "page_size": limit,
+            "total_items": total,
+            "total_pages": total_pages,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        }
     }
+
+
+@router.post("/promotions/location", status_code=status.HTTP_201_CREATED)
+async def create_location_promotion(
+    promotion: LocationPromotionCreate,
+    admin: dict = Depends(get_current_admin),
+):
+    """Create a location-scoped promotion campaign for an operator profile."""
+    db = await get_database()
+    payload = promotion.model_dump()
+    operator_profile = await _validate_location_promotion_payload(db, payload)
+
+    normalized_scope = _build_normalized_location_scope(payload["location_scope"])
+    now = datetime.now(timezone.utc)
+    status_value = payload.get("status", "draft")
+
+    promotion_doc = {
+        **payload,
+        "normalized_location_scope": normalized_scope,
+        "approved_by": admin.get("_id") if status_value == "active" else None,
+        "approved_at": now if status_value == "active" else None,
+        "last_daily_reset_at": now,
+        "total_impressions": 0,
+        "total_clicks": 0,
+        "last_served_at": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    result = await db.location_promotions.insert_one(promotion_doc)
+    promotion_doc["_id"] = result.inserted_id
+
+    return {
+        "message": "Location promotion created successfully",
+        "promotion": _serialize_promotion(promotion_doc, operator_profile=operator_profile),
+    }
+
+
+@router.get("/promotions/location")
+async def list_location_promotions(
+    status_filter: str | None = None,
+    area_name: str | None = None,
+    service_type: str | None = None,
+    admin: dict = Depends(get_current_admin),
+):
+    """List location-scoped promotion campaigns."""
+    db = await get_database()
+    query = {}
+    if status_filter:
+        query["status"] = status_filter
+    if area_name:
+        query["normalized_location_scope.area_name"] = _normalize_location_value(area_name)
+    if service_type:
+        query["service_type"] = service_type
+
+    promotions = []
+    cursor = db.location_promotions.find(query).sort([("updated_at", -1), ("priority", -1)])
+    async for promotion in cursor:
+        operator_profile = None
+        operator_profile_id = promotion.get("operator_profile_id")
+        if operator_profile_id:
+            try:
+                operator_profile = await db.operator_profiles.find_one({"_id": ObjectId(operator_profile_id)})
+            except Exception:
+                operator_profile = None
+        promotions.append(_serialize_promotion(promotion, operator_profile=operator_profile))
+
+    return {"promotions": promotions, "count": len(promotions)}
+
+
+@router.patch("/promotions/location/{promotion_id}")
+async def update_location_promotion(
+    promotion_id: str,
+    updates: LocationPromotionUpdate,
+    admin: dict = Depends(get_current_admin),
+):
+    """Update a location-scoped promotion campaign."""
+    db = await get_database()
+    try:
+        existing = await db.location_promotions.find_one({"_id": ObjectId(promotion_id)})
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid promotion ID") from exc
+
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promotion not found")
+
+    update_data = {key: value for key, value in updates.model_dump().items() if value is not None}
+    if not update_data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No data to update")
+
+    operator_profile = await _validate_location_promotion_payload(db, update_data, existing=existing)
+
+    if "location_scope" in update_data:
+        update_data["normalized_location_scope"] = _build_normalized_location_scope(update_data["location_scope"])
+
+    if update_data.get("status") == "active" and existing.get("status") != "active":
+        update_data["approved_by"] = admin.get("_id")
+        update_data["approved_at"] = datetime.now(timezone.utc)
+
+    update_data["updated_at"] = datetime.now(timezone.utc)
+
+    await db.location_promotions.update_one(
+        {"_id": ObjectId(promotion_id)},
+        {"$set": update_data},
+    )
+
+    updated = await db.location_promotions.find_one({"_id": ObjectId(promotion_id)})
+    return {
+        "message": "Location promotion updated successfully",
+        "promotion": _serialize_promotion(updated, operator_profile=operator_profile),
+    }
+
+
+@router.delete("/promotions/location/{promotion_id}")
+async def delete_location_promotion(
+    promotion_id: str,
+    admin: dict = Depends(get_current_admin),
+):
+    """Delete a location-scoped promotion campaign."""
+    db = await get_database()
+    try:
+        result = await db.location_promotions.delete_one({"_id": ObjectId(promotion_id)})
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid promotion ID") from exc
+
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promotion not found")
+
+    return {"message": "Location promotion deleted successfully"}
 
 
 @router.post("/users/{user_id}/suspend")
@@ -765,9 +1882,10 @@ async def get_user_details(
 
 @router.get("/quotes")
 async def get_all_quotes(
-    skip: int = 0,
     limit: int = 50,
+    cursor: str = None,
     status_filter: str = None,
+    response_filter: str = None,
     search: str = "",
     admin: dict = Depends(get_current_admin)
 ):
@@ -779,36 +1897,73 @@ async def get_all_quotes(
     # Filter by status
     if status_filter and status_filter in ["open", "closed"]:
         query["status"] = status_filter
+
+    if response_filter == "0":
+        query["responses.0"] = {"$exists": False}
+    elif response_filter == "1plus":
+        query["responses.0"] = {"$exists": True}
+    elif response_filter == "5plus":
+        query["responses.4"] = {"$exists": True}
     
     # Search by tourist name or location
     if search:
         query["$or"] = [
             {"tourist_name": {"$regex": search, "$options": "i"}},
+            {"tourist_email": {"$regex": search, "$options": "i"}},
+            {"from_location": {"$regex": search, "$options": "i"}},
+            {"to_location": {"$regex": search, "$options": "i"}},
             {"locations.name": {"$regex": search, "$options": "i"}},
             {"locations.state": {"$regex": search, "$options": "i"}},
             {"locations.country": {"$regex": search, "$options": "i"}}
         ]
     
-    # Get total count
     total = await db.quote_requests.count_documents(query)
+
+    cursor_match = None
+    if cursor:
+        cursor_created_at, cursor_document_id = _decode_datetime_object_cursor(cursor)
+        cursor_match = {
+            "$or": [
+                {"created_at": {"$lt": cursor_created_at}},
+                {"created_at": cursor_created_at, "_id": {"$lt": cursor_document_id}},
+            ]
+        }
+
+    effective_query = dict(query)
+    if cursor_match:
+        effective_query["$and"] = [cursor_match]
     
-    # Get paginated results
     quotes = []
-    cursor = db.quote_requests.find(query).skip(skip).limit(limit).sort("created_at", -1)
-    async for quote in cursor:
+    quote_docs = await db.quote_requests.find(effective_query).sort([("created_at", -1), ("_id", -1)]).limit(limit + 1).to_list(length=limit + 1)
+    has_more = len(quote_docs) > limit
+    quote_docs = quote_docs[:limit]
+    for quote in quote_docs:
         quote["_id"] = str(quote["_id"])
         if "tourist_id" in quote:
             quote["tourist_id"] = str(quote["tourist_id"])
         
         # Add response count
-        quote["responses_count"] = len(quote.get("responses", []))
+        quote["total_responses"] = len(quote.get("responses", []))
+        quote["responses_count"] = quote["total_responses"]
+        quote["is_closed"] = quote.get("status") == "closed"
         quotes.append(quote)
+
+    next_cursor = None
+    if has_more and quote_docs:
+        last_quote = quote_docs[-1]
+        next_cursor = _encode_datetime_object_cursor(created_at=last_quote["created_at"], document_id=last_quote["_id"])
+
+    total_pages = max(1, (total + limit - 1) // limit)
     
     return {
         "quotes": quotes,
-        "total": total,
-        "skip": skip,
-        "limit": limit
+        "pagination": {
+            "page_size": limit,
+            "total_items": total,
+            "total_pages": total_pages,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        }
     }
 
 
@@ -924,43 +2079,18 @@ async def get_quote_details(
 
 @router.get("/operators/performance")
 async def get_operators_performance(
-    skip: int = 0,
     limit: int = 50,
     sort_by: str = "rating",
     admin: dict = Depends(get_current_admin)
 ):
     """Get operator performance metrics"""
     db = await get_database()
-    
-    # Sort options: rating, responses, experience
-    sort_field = {"rating": "average_rating", "experience": "years_of_experience"}.get(sort_by, "average_rating")
-    
-    operators = []
-    cursor = db.operator_profiles.find({}).skip(skip).limit(limit).sort(sort_field, -1)
-    
-    async for operator in cursor:
-        operator["_id"] = str(operator["_id"])
-        
-        # Count total responses
-        total_responses = 0
-        async for quote in db.quote_requests.find({}):
-            total_responses += sum(1 for r in quote.get("responses", []) if r.get("operator_id") == str(operator["_id"]))
-        
-        # Count quotes responded in last 30 days
-        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
-        recent_responses = 0
-        async for quote in db.quote_requests.find({"updated_at": {"$gte": thirty_days_ago}}):
-            recent_responses += sum(1 for r in quote.get("responses", []) if r.get("operator_id") == str(operator["_id"]))
-        
-        operator["total_responses"] = total_responses
-        operator["recent_responses_30d"] = recent_responses
-        operator["response_rate"] = round((operator.get("average_rating", 0) / 5 * 100) if operator.get("average_rating") else 0, 2)
-        
-        operators.append(operator)
-    
+    all_rows = _sort_operator_performance_rows(await _load_admin_operator_performance_rows(db), sort_by)
+    operators = all_rows[:limit]
+
     return {
         "operators": operators,
-        "skip": skip,
+        "total": len(all_rows),
         "limit": limit
     }
 
@@ -973,34 +2103,14 @@ async def get_operators_leaderboard(
 ):
     """Get operator leaderboard by various metrics"""
     db = await get_database()
-    
-    if metric == "rating":
-        sort_field = "average_rating"
-    elif metric == "experience":
-        sort_field = "years_of_experience"
-    elif metric == "specializations":
-        sort_field = "specializations"
-    else:
-        sort_field = "average_rating"
-    
-    leaderboard = []
-    cursor = db.operator_profiles.find({}).sort(sort_field, -1).limit(limit)
-    
-    async for i, operator in enumerate(cursor):
-        operator["_id"] = str(operator["_id"])
-        
-        # Count total responses
-        total_responses = 0
-        async for quote in db.quote_requests.find({}):
-            total_responses += sum(1 for r in quote.get("responses", []) if r.get("operator_id") == str(operator["_id"]))
-        
-        operator["total_responses"] = total_responses
-        operator["rank"] = i + 1
-        leaderboard.append(operator)
-    
+    leaderboard = _sort_operator_performance_rows(await _load_admin_operator_performance_rows(db), metric)[:limit]
+    for index, operator in enumerate(leaderboard, start=1):
+        operator["rank"] = index
+
     return {
         "metric": metric,
-        "leaderboard": leaderboard
+        "leaderboard": leaderboard,
+        "operators": leaderboard,
     }
 
 
@@ -1021,41 +2131,20 @@ async def get_operator_performance_details(
             )
         
         operator["_id"] = str(operator["_id"])
-        
-        # Count responses and quotes
-        total_responses = 0
-        response_times = []
-        
-        async for quote in db.quote_requests.find({}):
-            for response in quote.get("responses", []):
-                if response.get("operator_id") == str(operator["_id"]):
-                    total_responses += 1
-                    # Calculate response time
-                    quote_created = quote.get("created_at")
-                    response_created = response.get("created_at", quote_created)
-                    if quote_created and response_created:
-                        time_diff = (response_created - quote_created).total_seconds() / 3600
-                        response_times.append(time_diff)
-        
-        # Calculate statistics
-        avg_response_time = sum(response_times) / len(response_times) if response_times else 0
-        
-        # Get specializations with count of responses for each
-        specializations_count = {}
-        for spec in operator.get("specializations", []):
-            specializations_count[spec] = 0
-        
-        async for quote in db.quote_requests.find({}):
-            for response in quote.get("responses", []):
-                if response.get("operator_id") == str(operator["_id"]):
-                    for spec in operator.get("specializations", []):
-                        specializations_count[spec] += 1
+
+        response_stats = await _load_operator_response_stats(db, [str(operator["_id"])])
+        operator_stats = response_stats.get(str(operator["_id"]), {})
+        total_responses = operator_stats.get("total_responses", 0)
+        avg_response_time = operator_stats.get("avg_response_time_hours", 0)
+        specializations_count = {
+            spec: total_responses for spec in operator.get("specializations", [])
+        }
         
         return {
             "operator": operator,
             "performance": {
                 "total_responses": total_responses,
-                "average_response_time_hours": round(avg_response_time, 2),
+                "average_response_time_hours": avg_response_time,
                 "average_rating": operator.get("average_rating", 0),
                 "total_reviews": operator.get("total_reviews", 0),
                 "specializations": specializations_count,
@@ -1076,45 +2165,64 @@ async def get_financial_overview(admin: dict = Depends(get_current_admin)):
     """Get financial overview metrics for admin dashboard."""
     db = await get_database()
 
-    completed_bookings = await db.bookings.find(
-        {"booking_status.status": "completed"}
-    ).to_list(None)
-
-    amounts = []
-    for booking in completed_bookings:
-        amount = booking.get("final_cost") or booking.get("estimated_cost") or 0
-        if amount and amount > 0:
-            amounts.append(float(amount))
-
-    total_revenue = sum(amounts)
-    avg_transaction = (total_revenue / len(amounts)) if amounts else 0
-
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    monthly_revenue = 0
-    for booking in completed_bookings:
-        created_at = booking.get("created_at")
-        amount = booking.get("final_cost") or booking.get("estimated_cost") or 0
-        if created_at and created_at >= month_start and amount and amount > 0:
-            monthly_revenue += float(amount)
-
     commission_percentage = 15
+
+    completed_stats_rows = await db.bookings.aggregate(
+        [
+            {"$match": {"booking_status.status": "completed"}},
+            {
+                "$project": {
+                    "amount": {"$ifNull": ["$final_cost", "$estimated_cost"]},
+                    "created_at": 1,
+                }
+            },
+            {"$match": {"amount": {"$gt": 0}}},
+            {
+                "$group": {
+                    "_id": None,
+                    "total_revenue": {"$sum": "$amount"},
+                    "transaction_count": {"$sum": 1},
+                    "monthly_revenue": {
+                        "$sum": {
+                            "$cond": [{"$gte": ["$created_at", month_start]}, "$amount", 0]
+                        }
+                    },
+                }
+            },
+        ]
+    ).to_list(length=1)
+    completed_stats = completed_stats_rows[0] if completed_stats_rows else {}
+
+    total_revenue = float(completed_stats.get("total_revenue", 0) or 0)
+    transaction_count = int(completed_stats.get("transaction_count", 0) or 0)
+    monthly_revenue = float(completed_stats.get("monthly_revenue", 0) or 0)
+    avg_transaction = (total_revenue / transaction_count) if transaction_count else 0
     commission_collected = total_revenue * (commission_percentage / 100)
     processing_fees = total_revenue * 0.02
 
-    pending_by_operator = defaultdict(float)
-    pending_bookings = await db.bookings.find(
-        {"booking_status.status": {"$in": ["pending", "confirmed"]}}
-    ).to_list(None)
-    for booking in pending_bookings:
-        amount = booking.get("final_cost") or booking.get("estimated_cost") or 0
-        operator_id = booking.get("operator_id")
-        if operator_id and amount and amount > 0:
-            payout_amount = float(amount) * (1 - commission_percentage / 100)
-            pending_by_operator[operator_id] += payout_amount
+    pending_rows = await db.bookings.aggregate(
+        [
+            {"$match": {"booking_status.status": {"$in": ["pending", "confirmed"]}, "operator_id": {"$exists": True, "$ne": None}}},
+            {
+                "$project": {
+                    "operator_id": 1,
+                    "payable": {
+                        "$multiply": [
+                            {"$ifNull": ["$final_cost", "$estimated_cost"]},
+                            1 - commission_percentage / 100,
+                        ]
+                    },
+                }
+            },
+            {"$match": {"payable": {"$gt": 0}}},
+            {"$group": {"_id": "$operator_id", "amount": {"$sum": "$payable"}}},
+        ]
+    ).to_list(length=None)
 
-    pending_payouts = sum(pending_by_operator.values())
-    pending_payout_count = len([v for v in pending_by_operator.values() if v > 0])
+    pending_payouts = sum(float(row.get("amount", 0) or 0) for row in pending_rows)
+    pending_payout_count = len(pending_rows)
 
     return {
         "totalRevenue": round(total_revenue, 2),
@@ -1133,18 +2241,26 @@ async def get_financial_transactions(admin: dict = Depends(get_current_admin)):
     """Get transaction-style records derived from bookings."""
     db = await get_database()
 
-    users = await db.users.find({}).to_list(None)
-    users_by_id = {str(user["_id"]): user for user in users}
-
-    profiles = await db.operator_profiles.find({}).to_list(None)
-    profiles_by_id = {str(profile["_id"]): profile for profile in profiles}
-
     method_cycle = ["card", "upi", "wallet"]
     commission_rate = 15
 
+    booking_docs = await db.bookings.find(
+        {
+            "$or": [
+                {"final_cost": {"$gt": 0}},
+                {"estimated_cost": {"$gt": 0}},
+            ]
+        },
+        {"tourist_id": 1, "operator_id": 1, "final_cost": 1, "estimated_cost": 1, "updated_at": 1, "created_at": 1, "booking_status": 1},
+    ).sort("created_at", -1).to_list(length=None)
+
+    tourist_ids = {booking.get("tourist_id") for booking in booking_docs if booking.get("tourist_id")}
+    operator_ids = {booking.get("operator_id") for booking in booking_docs if booking.get("operator_id")}
+    users_by_id = await _load_users_by_id(db, tourist_ids)
+    profiles_by_id = await _load_operator_profiles_by_id(db, operator_ids)
+
     transactions = []
-    cursor = db.bookings.find({}).sort("created_at", -1)
-    async for booking in cursor:
+    for booking in booking_docs:
         booking_id = str(booking.get("_id"))
         amount = booking.get("final_cost") or booking.get("estimated_cost") or 0
         if not amount or amount <= 0:
@@ -1184,22 +2300,22 @@ async def get_financial_commissions(admin: dict = Depends(get_current_admin)):
     """Get per-operator commission summary for the current period."""
     db = await get_database()
 
-    profiles = await db.operator_profiles.find({}).to_list(None)
-    profiles_by_id = {str(profile["_id"]): profile for profile in profiles}
-
     commission_rate = 15
-    earned_by_operator = defaultdict(float)
-
-    cursor = db.bookings.find({"booking_status.status": {"$in": ["completed", "confirmed"]}})
-    async for booking in cursor:
-        operator_id = booking.get("operator_id")
-        amount = booking.get("final_cost") or booking.get("estimated_cost") or 0
-        if operator_id and amount and amount > 0:
-            earned_by_operator[operator_id] += float(amount) * (commission_rate / 100)
+    rows = await db.bookings.aggregate(
+        [
+            {"$match": {"booking_status.status": {"$in": ["completed", "confirmed"]}, "operator_id": {"$exists": True, "$ne": None}}},
+            {"$project": {"operator_id": 1, "amount": {"$ifNull": ["$final_cost", "$estimated_cost"]}}},
+            {"$match": {"amount": {"$gt": 0}}},
+            {"$group": {"_id": "$operator_id", "gross_amount": {"$sum": "$amount"}}},
+        ]
+    ).to_list(length=None)
+    profiles_by_id = await _load_operator_profiles_by_id(db, [row["_id"] for row in rows if row.get("_id")])
 
     current_period = datetime.now(timezone.utc).strftime("%b %Y")
     commissions = []
-    for operator_id, earned in earned_by_operator.items():
+    for row in rows:
+        operator_id = row.get("_id")
+        earned = float(row.get("gross_amount", 0)) * (commission_rate / 100)
         commissions.append(
             {
                 "_id": f"{operator_id}-{current_period}",
@@ -1221,57 +2337,63 @@ async def get_financial_payouts(admin: dict = Depends(get_current_admin)):
     """Get pending payouts and payout history derived from booking state."""
     db = await get_database()
 
-    profiles = await db.operator_profiles.find({}).to_list(None)
-    profiles_by_id = {str(profile["_id"]): profile for profile in profiles}
-
     commission_rate = 15
-    pending_map = defaultdict(lambda: {"amount": 0.0, "latest_date": None})
-    history = []
+    pending_rows = await db.bookings.aggregate(
+        [
+            {"$match": {"booking_status.status": {"$in": ["pending", "confirmed"]}, "operator_id": {"$exists": True, "$ne": None}}},
+            {
+                "$project": {
+                    "operator_id": 1,
+                    "payable": {"$multiply": [{"$ifNull": ["$final_cost", "$estimated_cost"]}, 1 - commission_rate / 100]},
+                    "activity_at": {"$ifNull": ["$updated_at", "$created_at"]},
+                }
+            },
+            {"$match": {"payable": {"$gt": 0}}},
+            {"$group": {"_id": "$operator_id", "amount": {"$sum": "$payable"}, "latest_date": {"$max": "$activity_at"}}},
+        ]
+    ).to_list(length=None)
 
-    cursor = db.bookings.find({}).sort("updated_at", -1)
-    async for booking in cursor:
+    history_bookings = await db.bookings.find(
+        {"booking_status.status": "completed", "$or": [{"final_cost": {"$gt": 0}}, {"estimated_cost": {"$gt": 0}}]},
+        {"operator_id": 1, "final_cost": 1, "estimated_cost": 1, "updated_at": 1, "created_at": 1},
+    ).sort("updated_at", -1).limit(50).to_list(length=50)
+
+    profile_ids = {row.get("_id") for row in pending_rows if row.get("_id")}
+    profile_ids.update({booking.get("operator_id") for booking in history_bookings if booking.get("operator_id")})
+    profiles_by_id = await _load_operator_profiles_by_id(db, profile_ids)
+
+    history = []
+    for booking in history_bookings:
         operator_id = booking.get("operator_id")
         amount = booking.get("final_cost") or booking.get("estimated_cost") or 0
-        if not operator_id or not amount or amount <= 0:
-            continue
-
         payable = float(amount) * (1 - commission_rate / 100)
-        status = booking.get("booking_status", {}).get("status")
-        updated_at = booking.get("updated_at") or booking.get("created_at")
-
-        if status in ["pending", "confirmed"]:
-            pending_map[operator_id]["amount"] += payable
-            if not pending_map[operator_id]["latest_date"] or (
-                updated_at and updated_at > pending_map[operator_id]["latest_date"]
-            ):
-                pending_map[operator_id]["latest_date"] = updated_at
-
-        if status == "completed":
-            booking_id = str(booking.get("_id"))
-            history.append(
-                {
-                    "_id": booking_id,
-                    "operator_name": profiles_by_id.get(operator_id, {}).get("business_name", "Unknown Operator"),
-                    "date": updated_at,
-                    "amount": round(payable, 2),
-                    "status": "completed",
-                    "reference_id": f"PAY-{booking_id[-8:].upper()}",
-                }
-            )
+        booking_id = str(booking.get("_id"))
+        history.append(
+            {
+                "_id": booking_id,
+                "operator_name": profiles_by_id.get(operator_id, {}).get("business_name", "Unknown Operator"),
+                "date": booking.get("updated_at") or booking.get("created_at"),
+                "amount": round(payable, 2),
+                "status": "completed",
+                "reference_id": f"PAY-{booking_id[-8:].upper()}",
+            }
+        )
 
     pending = []
     now = datetime.now(timezone.utc)
-    for operator_id, data in pending_map.items():
-        if data["amount"] <= 0:
+    for row in pending_rows:
+        operator_id = row.get("_id")
+        amount = float(row.get("amount", 0))
+        if amount <= 0:
             continue
 
-        latest = data["latest_date"] or now
+        latest = _coerce_utc_datetime(row.get("latest_date")) or now
         days_pending = max((now - latest).days, 0)
         pending.append(
             {
                 "_id": operator_id,
                 "operator_name": profiles_by_id.get(operator_id, {}).get("business_name", "Unknown Operator"),
-                "amount": round(data["amount"], 2),
+                "amount": round(amount, 2),
                 "daysPending": days_pending,
                 "bankName": "N/A",
                 "accountLast4": "0000",
@@ -1321,17 +2443,65 @@ async def get_financial_reports(admin: dict = Depends(get_current_admin)):
 # ============= AUDIT & COMPLIANCE ENDPOINTS =============
 
 @router.get("/audit/summary")
-async def get_audit_summary(admin: dict = Depends(get_current_admin)):
+async def get_audit_summary(
+    system_page: int = 1,
+    system_per_page: int = 10,
+    system_search: str = "",
+    system_severity: str = "",
+    system_service: str = "",
+    system_unread_only: bool = False,
+    sessions_page: int = 1,
+    sessions_per_page: int = 10,
+    session_search: str = "",
+    session_user_type: str = "",
+    session_device_type: str = "",
+    security_page: int = 1,
+    security_per_page: int = 10,
+    security_search: str = "",
+    security_event_type: str = "",
+    security_date_from: str = "",
+    admin: dict = Depends(get_current_admin),
+):
     """Get audit and compliance summary data for admin dashboard."""
     db = await get_database()
     now = datetime.now(timezone.utc)
+    activity_cutoff = now - timedelta(days=14)
+    bookings = await db.bookings.find(
+        {},
+        {
+            "tourist_id": 1,
+            "created_at": 1,
+            "updated_at": 1,
+            "booking_status.status": 1,
+            "cart.area_name": 1,
+        },
+    ).sort("updated_at", -1).to_list(200)
+    quotes = await db.quote_requests.aggregate(
+        [
+            {"$sort": {"updated_at": -1}},
+            {"$limit": 200},
+            {
+                "$project": {
+                    "tourist_name": 1,
+                    "status": 1,
+                    "created_at": 1,
+                    "updated_at": 1,
+                    "response_count": {"$size": {"$ifNull": ["$responses", []]}},
+                }
+            },
+        ]
+    ).to_list(length=200)
+    recent_users = await db.users.find(
+        {"$or": [{"last_login": {"$gte": activity_cutoff}}, {"updated_at": {"$gte": activity_cutoff}}, {"created_at": {"$gte": activity_cutoff}}]},
+        {"full_name": 1, "email": 1, "user_type": 1, "created_at": 1, "updated_at": 1, "last_login": 1, "is_active": 1},
+    ).sort("updated_at", -1).limit(200).to_list(length=200)
+    recent_admins = await db.admins.find(
+        {"$or": [{"last_login": {"$gte": activity_cutoff}}, {"updated_at": {"$gte": activity_cutoff}}, {"created_at": {"$gte": activity_cutoff}}]},
+        {"full_name": 1, "email": 1, "created_at": 1, "updated_at": 1, "last_login": 1},
+    ).sort("last_login", -1).limit(120).to_list(length=120)
 
-    users = await db.users.find({}).to_list(None)
-    admins = await db.admins.find({}).to_list(None)
-    bookings = await db.bookings.find({}).sort("updated_at", -1).to_list(200)
-    quotes = await db.quote_requests.find({}).sort("updated_at", -1).to_list(200)
-
-    users_by_id = {str(u["_id"]): u for u in users}
+    tourist_ids = {booking.get("tourist_id") for booking in bookings if booking.get("tourist_id")}
+    users_by_id = await _load_users_by_id(db, tourist_ids)
 
     # Activity logs (derived from recent bookings + quotes + user registrations)
     activity_logs = []
@@ -1355,13 +2525,14 @@ async def get_audit_summary(admin: dict = Depends(get_current_admin)):
         )
 
     for quote in quotes[:60]:
+        response_count = int(quote.get("response_count", 0) or 0)
         activity_logs.append(
             {
                 "_id": f"quote-{quote.get('_id')}",
                 "user_name": quote.get("tourist_name") or "Tourist User",
-                "actionType": "update" if quote.get("responses") else "create",
+                "actionType": "update" if response_count else "create",
                 "resource": "tour",
-                "description": f"Quote request {quote.get('status', 'open')} with {len(quote.get('responses', []))} response(s)",
+                "description": f"Quote request {quote.get('status', 'open')} with {response_count} response(s)",
                 "timestamp": quote.get("updated_at") or quote.get("created_at") or now,
                 "ip_address": "N/A",
                 "user_agent": "Web Client",
@@ -1370,7 +2541,7 @@ async def get_audit_summary(admin: dict = Depends(get_current_admin)):
             }
         )
 
-    for user in users[:40]:
+    for user in recent_users[:40]:
         activity_logs.append(
             {
                 "_id": f"user-{user.get('_id')}",
@@ -1389,56 +2560,34 @@ async def get_audit_summary(admin: dict = Depends(get_current_admin)):
     activity_logs.sort(key=lambda x: x.get("timestamp") or now, reverse=True)
     activity_logs = activity_logs[:150]
 
-    # System events (derived health + workload indicators)
-    pending_bookings = sum(1 for b in bookings if b.get("booking_status", {}).get("status") in ["pending", "confirmed"])
-    open_quotes = sum(1 for q in quotes if q.get("status") == "open")
-    responded_quotes = sum(1 for q in quotes if q.get("responses"))
-    conversion_rate = (responded_quotes / len(quotes) * 100) if quotes else 0
+    system_filters = {"category": "system"}
+    system_filters.update(
+        _build_audit_search_query(
+            ["title", "message", "service", "error_code", "details"],
+            system_search,
+        )
+    )
+    normalized_system_severity = system_severity.strip().casefold()
+    normalized_system_service = system_service.strip().casefold()
+    if normalized_system_severity:
+        system_filters["severity"] = normalized_system_severity
+    if normalized_system_service:
+        system_filters["service"] = normalized_system_service
+    if system_unread_only:
+        system_filters["read"] = False
 
-    system_events = [
-        {
-            "_id": "system-api-health",
-            "title": "API Service Status",
-            "message": "API service is running and responsive",
-            "severity": "info",
-            "service": "api",
-            "error_code": "API_OK",
-            "timestamp": now,
-            "read": False,
-            "details": "Health endpoint returned healthy",
-        },
-        {
-            "_id": "system-booking-backlog",
-            "title": "Pending Booking Backlog",
-            "message": f"{pending_bookings} booking(s) are pending or confirmed",
-            "severity": "warning" if pending_bookings > 25 else "info",
-            "service": "database",
-            "error_code": "BOOKING_BACKLOG",
-            "timestamp": now - timedelta(minutes=15),
-            "read": pending_bookings <= 25,
-            "details": "Monitor operator response time for open booking requests",
-        },
-        {
-            "_id": "system-quote-conversion",
-            "title": "Quote Response Conversion",
-            "message": f"{conversion_rate:.1f}% of quotes have at least one operator response",
-            "severity": "warning" if conversion_rate < 40 else "info",
-            "service": "notification",
-            "error_code": "QUOTE_CONVERSION",
-            "timestamp": now - timedelta(minutes=30),
-            "read": conversion_rate >= 40,
-            "details": "Low conversion may indicate coverage or engagement issues",
-        },
-    ]
+    paged_system_events, system_pagination = await _paginate_audit_events(
+        db.audit_events,
+        filters=system_filters,
+        page=system_page,
+        per_page=system_per_page,
+    )
 
     # Sessions (derived from users/admins with recent activity)
     sessions = []
-    for user in users:
-        last_activity = user.get("last_login") or user.get("updated_at") or user.get("created_at")
+    for user in recent_users:
+        last_activity = _coerce_utc_datetime(user.get("last_login") or user.get("updated_at") or user.get("created_at"))
         if not last_activity:
-            continue
-
-        if (now - last_activity) > timedelta(days=14):
             continue
 
         session_status = "active" if (now - last_activity) <= timedelta(hours=8) else "idle"
@@ -1457,12 +2606,9 @@ async def get_audit_summary(admin: dict = Depends(get_current_admin)):
             }
         )
 
-    for admin_user in admins:
-        last_activity = admin_user.get("last_login") or admin_user.get("updated_at") or admin_user.get("created_at")
+    for admin_user in recent_admins:
+        last_activity = _coerce_utc_datetime(admin_user.get("last_login") or admin_user.get("updated_at") or admin_user.get("created_at"))
         if not last_activity:
-            continue
-
-        if (now - last_activity) > timedelta(days=14):
             continue
 
         session_status = "active" if (now - last_activity) <= timedelta(hours=8) else "idle"
@@ -1484,54 +2630,66 @@ async def get_audit_summary(admin: dict = Depends(get_current_admin)):
     sessions.sort(key=lambda x: x.get("last_activity") or now, reverse=True)
     sessions = sessions[:120]
 
-    # Security events (derived anomaly indicators)
-    cancelled_bookings = sum(1 for b in bookings if b.get("booking_status", {}).get("status") == "cancelled")
-    quotes_without_responses = sum(1 for q in quotes if not q.get("responses"))
-    inactive_users = sum(1 for u in users if not u.get("is_active", True))
+    security_filters = {"category": "security"}
+    security_filters.update(
+        _build_audit_search_query(
+            ["title", "description", "user_name", "ip_address", "location", "remediation"],
+            security_search,
+        )
+    )
+    normalized_security_event_type = security_event_type.strip().casefold()
+    security_date_floor = _parse_filter_date(security_date_from)
+    if normalized_security_event_type:
+        security_filters["event_type"] = normalized_security_event_type
+    if security_date_floor:
+        security_filters["timestamp"] = {"$gte": security_date_floor}
 
-    security_events = [
-        {
-            "_id": "security-inactive-users",
-            "title": "Inactive Accounts Detected",
-            "event_type": "anomaly",
-            "severity": "warning" if inactive_users > 0 else "info",
-            "user_name": "System",
-            "ip_address": "N/A",
-            "location": "Internal",
-            "timestamp": now - timedelta(minutes=20),
-            "description": f"{inactive_users} account(s) are currently inactive",
-            "remediation": "Review suspended or deactivated accounts regularly",
-        },
-        {
-            "_id": "security-cancelled-bookings",
-            "title": "Booking Cancellation Pattern",
-            "event_type": "suspicious",
-            "severity": "warning" if cancelled_bookings > 10 else "info",
-            "user_name": "System",
-            "ip_address": "N/A",
-            "location": "Internal",
-            "timestamp": now - timedelta(minutes=40),
-            "description": f"{cancelled_bookings} cancelled booking(s) observed",
-            "remediation": "Monitor operators with repeated cancellations",
-        },
-        {
-            "_id": "security-unanswered-quotes",
-            "title": "Unanswered Quote Requests",
-            "event_type": "failed_login",
-            "severity": "critical" if quotes_without_responses > 20 else "warning",
-            "user_name": "System",
-            "ip_address": "N/A",
-            "location": "Internal",
-            "timestamp": now - timedelta(minutes=55),
-            "description": f"{quotes_without_responses} quote request(s) without responses",
-            "remediation": "Trigger nudges to matching operators and review coverage",
-        },
-    ]
+    paged_security_events, security_pagination = await _paginate_audit_events(
+        db.audit_events,
+        filters=security_filters,
+        page=security_page,
+        per_page=security_per_page,
+    )
 
-    failed_login_attempts = max(inactive_users * 2, 0)
-    suspicious_activities = cancelled_bookings
-    anomalies_detected = quotes_without_responses
-    rate_limit_hits = max(int(len(activity_logs) * 0.03), 0)
+    failed_login_attempts = await db.audit_events.count_documents({"category": "security", "event_type": "failed_login"})
+    suspicious_activities = await db.audit_events.count_documents({"category": "security", "event_type": {"$in": ["brute_force", "suspicious"]}})
+    anomalies_detected = await db.audit_events.count_documents({"category": "security", "severity": "critical"})
+    rate_limit_hits = await db.audit_events.count_documents({"category": "security", "event_type": "rate_limit"})
+
+    normalized_session_search = session_search.strip().casefold()
+    normalized_session_user_type = session_user_type.strip().casefold()
+    normalized_session_device_type = session_device_type.strip().casefold()
+
+    filtered_sessions = []
+    for session in sessions:
+        haystack = " ".join([
+            str(session.get("user_name") or ""),
+            str(session.get("email") or ""),
+            str(session.get("ip_address") or ""),
+            str(session.get("location") or ""),
+            str(session.get("device_type") or ""),
+        ]).casefold()
+
+        if normalized_session_search and normalized_session_search not in haystack:
+            continue
+        if normalized_session_user_type and str(session.get("user_type") or "").casefold() != normalized_session_user_type:
+            continue
+        if normalized_session_device_type and str(session.get("device_type") or "").casefold() != normalized_session_device_type:
+            continue
+        filtered_sessions.append(session)
+
+    filtered_active_sessions = [session for session in filtered_sessions if session.get("status") == "active"]
+    unique_users_online = len({session.get("user_name") or "Unknown" for session in filtered_active_sessions})
+    avg_session_duration = 0
+    if filtered_active_sessions:
+        total_duration = 0
+        for session in filtered_active_sessions:
+            started_at = _coerce_utc_datetime(session.get("created_at")) or now
+            last_activity = _coerce_utc_datetime(session.get("last_activity")) or now
+            total_duration += max(0, int((last_activity - started_at).total_seconds() // 60))
+        avg_session_duration = round(total_duration / len(filtered_active_sessions))
+
+    paged_sessions, sessions_pagination = _paginate_items(filtered_sessions, sessions_page, sessions_per_page)
 
     activity_stats = {
         "total": len(activity_logs),
@@ -1557,15 +2715,23 @@ async def get_audit_summary(admin: dict = Depends(get_current_admin)):
             - min(30, suspicious_activities)
             - min(30, anomalies_detected)
             - min(20, failed_login_attempts)
-            - min(20, inactive_users),
+            - min(20, rate_limit_hits),
         ),
     )
 
     return {
         "activityLogs": activity_logs,
-        "systemEvents": system_events,
-        "sessions": sessions,
-        "securityEvents": security_events,
+        "systemEvents": paged_system_events,
+        "systemEventsPagination": system_pagination,
+        "sessions": paged_sessions,
+        "sessionsPagination": sessions_pagination,
+        "sessionsSummary": {
+            "activeCount": len(filtered_active_sessions),
+            "uniqueUsersOnline": unique_users_online,
+            "avgSessionDuration": avg_session_duration,
+        },
+        "securityEvents": paged_security_events,
+        "securityEventsPagination": security_pagination,
         "failedLoginAttempts": failed_login_attempts,
         "suspiciousActivities": suspicious_activities,
         "anomaliesDetected": anomalies_detected,
@@ -1592,60 +2758,53 @@ async def get_reports_summary(admin: dict = Depends(get_current_admin)):
     closed_quotes = await db.quote_requests.count_documents({"status": "closed"})
     completed_bookings = await db.bookings.count_documents({"booking_status.status": "completed"})
 
-    persisted_reports = await db.admin_reports.find({}).sort("updated_at", -1).to_list(200)
+    persisted_reports = await db.admin_reports.find(
+        {},
+        {
+            "name": 1,
+            "type": 1,
+            "status": 1,
+            "size": 1,
+            "generated_by": 1,
+            "created_at": 1,
+            "updated_at": 1,
+        },
+    ).sort("updated_at", -1).to_list(200)
     for item in persisted_reports:
         item["_id"] = str(item["_id"])
 
-    persisted_schedules = await db.admin_report_schedules.find({}).sort("created_at", -1).to_list(200)
+    persisted_schedules = await db.admin_report_schedules.find(
+        {},
+        {
+            "report_name": 1,
+            "frequency": 1,
+            "recipients": 1,
+            "format": 1,
+            "status": 1,
+            "next_run": 1,
+            "runs_count": 1,
+            "created_at": 1,
+        },
+    ).sort("created_at", -1).to_list(200)
     for item in persisted_schedules:
         item["_id"] = str(item["_id"])
 
-    persisted_dashboards = await db.admin_dashboards.find({}).sort("created_at", -1).to_list(100)
+    persisted_dashboards = await db.admin_dashboards.find(
+        {},
+        {
+            "name": 1,
+            "description": 1,
+            "widgets": 1,
+            "created_at": 1,
+            "shared_with": 1,
+        },
+    ).sort("created_at", -1).to_list(100)
     for item in persisted_dashboards:
-        item["_id"] = str(item["_id"])
+        serialized = _serialize_dashboard(item)
+        item.clear()
+        item.update(serialized)
 
-    report_items = [
-        {
-            "_id": "report-revenue-current-month",
-            "name": f"Revenue Analysis - {now.strftime('%b %Y')}",
-            "type": "revenue",
-            "status": "completed",
-            "size": "1.9 MB",
-            "generated_by": "System",
-            "created_at": now - timedelta(days=2),
-            "updated_at": now - timedelta(days=1),
-        },
-        {
-            "_id": "report-operator-performance",
-            "name": "Operator Performance Snapshot",
-            "type": "operators",
-            "status": "completed",
-            "size": "1.2 MB",
-            "generated_by": "System",
-            "created_at": now - timedelta(days=3),
-            "updated_at": now - timedelta(days=2),
-        },
-        {
-            "_id": "report-booking-trends",
-            "name": "Booking Trends Summary",
-            "type": "bookings",
-            "status": "completed",
-            "size": "1.4 MB",
-            "generated_by": admin.get("full_name", "Admin User"),
-            "created_at": now - timedelta(days=4),
-            "updated_at": now - timedelta(days=3),
-        },
-        {
-            "_id": "report-customer-acquisition",
-            "name": "Customer Acquisition Overview",
-            "type": "customers",
-            "status": "draft",
-            "size": "0.6 MB",
-            "generated_by": admin.get("full_name", "Admin User"),
-            "created_at": now - timedelta(days=1),
-            "updated_at": now - timedelta(hours=12),
-        },
-    ]
+    report_items = _default_admin_report_items(now=now, admin=admin)
 
     scheduled_items = [
         {
@@ -1674,11 +2833,12 @@ async def get_reports_summary(admin: dict = Depends(get_current_admin)):
         {
             "_id": "dashboard-executive",
             "name": "Executive Dashboard",
+            "description": "Executive summary across revenue, bookings, and top operator performance.",
             "widgets": [
-                {"name": "Revenue Chart"},
-                {"name": "Bookings Graph"},
-                {"name": "Top Operators"},
-                {"name": "Key Metrics"},
+                {"key": "revenue", "name": "Revenue Chart"},
+                {"key": "bookings", "name": "Bookings Graph"},
+                {"key": "operators", "name": "Top Operators"},
+                {"key": "metrics", "name": "Key Metrics"},
             ],
             "created_at": now - timedelta(days=14),
             "shared_with": ["leadership@tourapp.local"],
@@ -1686,10 +2846,11 @@ async def get_reports_summary(admin: dict = Depends(get_current_admin)):
         {
             "_id": "dashboard-operations",
             "name": "Operations Dashboard",
+            "description": "Operations-focused dashboard for booking health, quote throughput, and response times.",
             "widgets": [
-                {"name": "Booking Status"},
-                {"name": "Quote Throughput"},
-                {"name": "Response Times"},
+                {"key": "bookings", "name": "Bookings Graph"},
+                {"key": "operators", "name": "Top Operators"},
+                {"key": "metrics", "name": "Key Metrics"},
             ],
             "created_at": now - timedelta(days=10),
             "shared_with": ["ops@tourapp.local"],
@@ -1723,6 +2884,123 @@ async def get_reports_summary(admin: dict = Depends(get_current_admin)):
         "prebuiltTemplates": prebuilt_templates,
         "metrics": metrics,
     }
+
+
+@router.get("/reports/{report_id}")
+async def get_admin_report_details(report_id: str, admin: dict = Depends(get_current_admin)):
+    """Return live detail payload for a single report card."""
+    db = await get_database()
+    report = await _find_admin_report(db, report_id, admin)
+    return await _build_admin_report_payload(db, report)
+
+
+@router.get("/reports/{report_id}/download")
+async def download_admin_report(report_id: str, format: str = "json", admin: dict = Depends(get_current_admin)):
+    """Download a generated report payload as JSON, CSV, or PDF."""
+    db = await get_database()
+    report = await _find_admin_report(db, report_id, admin)
+    payload = await _build_admin_report_payload(db, report)
+
+    normalized_format = format.lower()
+    filename_base = _slugify_filename(report.get("name", "report"))
+
+    if normalized_format == "csv":
+        content = _report_payload_to_csv(payload)
+        media_type = "text/csv"
+        filename = f"{filename_base}.csv"
+    elif normalized_format == "pdf":
+        content = _render_text_pdf(_report_payload_to_text_lines(payload))
+        media_type = "application/pdf"
+        filename = f"{filename_base}.pdf"
+    elif normalized_format == "json":
+        content = json.dumps(payload, default=str, indent=2)
+        media_type = "application/json"
+        filename = f"{filename_base}.json"
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported report format")
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/reports/dashboards/{dashboard_id}")
+async def get_admin_dashboard(dashboard_id: str, admin: dict = Depends(get_current_admin)):
+    """Return a single dashboard document for the reports UI."""
+    db = await get_database()
+    dashboard = await db.admin_dashboards.find_one(_dashboard_query(dashboard_id))
+    if dashboard is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
+    return {"dashboard": _serialize_dashboard(dashboard)}
+
+
+@router.post("/reports/dashboards")
+async def create_admin_dashboard(payload: dict, admin: dict = Depends(get_current_admin)):
+    """Create a persisted admin dashboard."""
+    db = await get_database()
+
+    name = str((payload or {}).get("name") or "").strip()
+    widgets = _normalize_dashboard_widgets((payload or {}).get("widgets") or [])
+    if not name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dashboard name is required")
+    if not widgets:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select at least one widget")
+
+    document = {
+        "name": name,
+        "description": str((payload or {}).get("description") or "").strip(),
+        "widgets": widgets,
+        "shared_with": [str(entry).strip() for entry in ((payload or {}).get("shared_with") or []) if str(entry).strip()],
+        "created_by": admin.get("_id"),
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+    }
+
+    result = await db.admin_dashboards.insert_one(document)
+    document["_id"] = result.inserted_id
+    return {"message": "Dashboard created", "dashboard": _serialize_dashboard(document)}
+
+
+@router.patch("/reports/dashboards/{dashboard_id}")
+async def update_admin_dashboard(dashboard_id: str, payload: dict, admin: dict = Depends(get_current_admin)):
+    """Update dashboard metadata, widgets, or sharing."""
+    db = await get_database()
+    query = _dashboard_query(dashboard_id)
+
+    update_data = {"updated_at": datetime.now(timezone.utc), "updated_by": admin.get("_id")}
+    if "name" in (payload or {}):
+        name = str((payload or {}).get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dashboard name is required")
+        update_data["name"] = name
+    if "description" in (payload or {}):
+        update_data["description"] = str((payload or {}).get("description") or "").strip()
+    if "widgets" in (payload or {}):
+        widgets = _normalize_dashboard_widgets((payload or {}).get("widgets") or [])
+        if not widgets:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select at least one widget")
+        update_data["widgets"] = widgets
+    if "shared_with" in (payload or {}):
+        update_data["shared_with"] = [str(entry).strip() for entry in ((payload or {}).get("shared_with") or []) if str(entry).strip()]
+
+    result = await db.admin_dashboards.update_one(query, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
+
+    dashboard = await db.admin_dashboards.find_one(query)
+    return {"message": "Dashboard updated", "dashboard": _serialize_dashboard(dashboard)}
+
+
+@router.delete("/reports/dashboards/{dashboard_id}")
+async def delete_admin_dashboard(dashboard_id: str, admin: dict = Depends(get_current_admin)):
+    """Delete a persisted admin dashboard."""
+    db = await get_database()
+    result = await db.admin_dashboards.delete_one(_dashboard_query(dashboard_id))
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
+    return {"message": "Dashboard deleted"}
 
 
 # ============= SETTINGS & SYSTEM HEALTH ENDPOINTS =============

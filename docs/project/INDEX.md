@@ -167,9 +167,51 @@ Complete documentation for the Tour App Admin Dashboard implementation. This ind
 
 ---
 
+### 10. [PROVIDER_PAID_DISTRIBUTION_PLAN.md](PROVIDER_PAID_DISTRIBUTION_PLAN.md) ✨ NEW
+**Best for:** Reviewing the production-ready monetization approach for operator paid services  
+**Length:** Medium  
+**Contents:**
+- Current promotion infrastructure already present in the codebase
+- Recommended subscription + credits commercial model
+- Quantized billing events for search, planner, and quote leads
+- Security, anti-fraud, and payment integrity requirements
+- Phase-wise implementation plan and phase-1 acceptance criteria
+
+**When to use:** Before building provider paid plans, billing, and campaign expansion
+
+---
+
+### 11. [MONGODB_SCALING_HARDENING.md](MONGODB_SCALING_HARDENING.md) ✨ NEW
+**Best for:** Future database scaling and operational hardening decisions  
+**Length:** Medium  
+**Contents:**
+- MongoDB suitability assessment for this codebase
+- Verified query and indexing risks in current backend paths
+- Small, medium, and large scale readiness guidance
+- P0, P1, and P2 hardening checklist
+- Backup and restore scaling notes
+
+**When to use:** Before performance work, production scaling, or backup architecture changes
+
+---
+
+### 12. [HARDENED_BACKEND_PLAYBOOK.md](HARDENED_BACKEND_PLAYBOOK.md) ✨ NEW
+**Best for:** Repeating the same backend hardening approach in future slices  
+**Length:** Medium  
+**Contents:**
+- Single-pass workflow for hardening backend read/write paths
+- Query-shape triage patterns for pagination, projections, counts, and aggregations
+- Indexing and validation rules to apply in the same slice
+- Production-safety notes for destructive operations like backup and restore
+- Acceptance checklist for API and live UI validation
+
+**When to use:** Before starting a backend optimization or operational hardening task
+
+---
+
 ## 🔧 Technical Reference
 
-### 10. [FINAL_DELIVERY_SUMMARY.md](FINAL_DELIVERY_SUMMARY.md)
+### 13. [FINAL_DELIVERY_SUMMARY.md](FINAL_DELIVERY_SUMMARY.md)
 **Best for:** Complete project overview  
 **Length:** Comprehensive  
 **Contents:**

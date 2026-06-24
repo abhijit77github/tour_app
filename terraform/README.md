@@ -2,6 +2,11 @@
 
 This directory contains Terraform configuration for deploying the Tour App to Kubernetes in a platform-agnostic way.
 
+Important runtime assumptions for this stack:
+- the backend uses `MONGODB_URL`, `DATABASE_NAME`, `SECRET_KEY`, and `FRONTEND_URL`
+- the frontend image must be built with `VITE_API_URL=/api`
+- ingress serves the SPA at `/` and strips `/api/` before forwarding to FastAPI
+
 ## Prerequisites
 
 1. **Kubernetes Cluster**: Any Kubernetes cluster (local, AWS EKS, GCP GKE, Azure AKS, etc.)
@@ -36,7 +41,7 @@ docker push your-registry/tour-app-backend:latest
 
 # Build frontend image
 cd ../frontend
-docker build -t your-registry/tour-app-frontend:latest .
+docker build --build-arg VITE_API_URL=/api -t your-registry/tour-app-frontend:latest .
 docker push your-registry/tour-app-frontend:latest
 ```
 
@@ -216,25 +221,26 @@ terraform destroy
 
 ### Backend
 
-Set in `backend.tf` ConfigMap:
+Set in `backend.tf` ConfigMap/Secret:
+- `MONGODB_URL` - MongoDB connection string with `authSource=admin`
+- `DATABASE_NAME` - Database name (default: `tour_app_db`)
+- `SECRET_KEY` - JWT signing secret (auto-generated)
+- `FRONTEND_URL` - Public frontend origin for CORS
+- `HOST` - Bind address
 - `PORT` - Backend port (default: 8808)
-- `MONGODB_HOST` - MongoDB hostname
-- `MONGODB_PORT` - MongoDB port (default: 27017)
-- `MONGODB_DB` - Database name (default: tour_app)
-- `JWT_SECRET` - JWT signing secret (auto-generated)
-- `ENVIRONMENT` - dev/staging/prod
+- `DEBUG` - FastAPI debug flag
 
 ### Frontend
 
-Set in `frontend.tf` Deployment:
-- `VITE_API_URL` - Backend API URL (auto-configured)
+Build-time requirement:
+- `VITE_API_URL=/api` when building the frontend image used by Kubernetes
 
 ## Security Considerations
 
 1. **Secrets**: MongoDB credentials and JWT secret are generated randomly and stored as Kubernetes Secrets
 2. **RBAC**: Apply appropriate RBAC policies to the namespace
 3. **Network Policies**: Consider adding network policies to restrict traffic
-4. **TLS**: Uncomment TLS configuration in `ingress.tf` and set up cert-manager for HTTPS
+4. **TLS**: Add cert-manager-managed TLS or your platform's ingress TLS after the base HTTP path is validated
 5. **Private Registry**: Use private Docker registry with auth secrets if needed
 
 ## Scaling
@@ -268,7 +274,9 @@ kubectl exec -it <pod-name> -n tour-app -- mongosh --host mongodb --username adm
 
 ```bash
 # Check ingress status
-kubectl describe ingress tour-app-ingress -n tour-app
+kubectl get ingress -n tour-app
+kubectl describe ingress tour-app-frontend-ingress -n tour-app
+kubectl describe ingress tour-app-api-ingress -n tour-app
 
 # Ensure ingress controller is installed
 kubectl get pods -n ingress-nginx

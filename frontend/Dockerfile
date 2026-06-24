@@ -3,6 +3,9 @@ FROM node:18-alpine as builder
 
 WORKDIR /app
 
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=${VITE_API_URL}
+
 # Copy package files
 COPY package.json package-lock.json ./
 
@@ -27,8 +30,8 @@ RUN npm install -g serve
 COPY --from=builder /app/dist ./dist
 
 # Create non-root user
-RUN addgroup -g 1000 appuser && \
-    adduser -D -u 1000 -G appuser appuser && \
+RUN addgroup -S appuser && \
+    adduser -S -G appuser appuser && \
     chown -R appuser:appuser /app
 
 USER appuser
@@ -38,7 +41,7 @@ EXPOSE 5173
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:5173/health || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:5173/ || exit 1
 
 # Run application
 CMD ["serve", "-s", "dist", "-l", "5173"]

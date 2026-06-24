@@ -22,3 +22,11 @@ Seeded operator businesses/profiles:
 Local Demo Tours
 Himalayan Escape Co
 Coastal Trails Goa
+
+
+
+TODOs
+------------------
+Add payment session creation plus webhook handling for your chosen provider first.
+On successful payment, convert the purchase order into a real active or pending-approval location promotion automatically.
+Add an operator order detail screen with payment state transitions and invoice/reference data.

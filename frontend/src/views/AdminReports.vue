@@ -176,6 +176,12 @@
           <option value="draft">📝 Draft</option>
         </select>
 
+        <select v-model="reportDownloadFormat" class="filter-select">
+          <option v-for="option in reportDownloadFormats" :key="option.value" :value="option.value">
+            Download {{ option.label }}
+          </option>
+        </select>
+
         <button @click="showNewReportModal = true" class="btn btn-primary">➕ New Report</button>
       </div>
 
@@ -442,7 +448,7 @@
         <h3>Custom Dashboards</h3>
 
         <div class="dashboards-controls">
-          <button @click="showDashboardModal = true" class="btn btn-primary">➕ New Dashboard</button>
+          <button @click="openCreateDashboardModal" class="btn btn-primary">➕ New Dashboard</button>
         </div>
 
         <div v-if="dashboards.length === 0" class="empty-state">
@@ -458,7 +464,51 @@
             <div class="dashboard-preview">
               <div class="preview-grid">
                 <div v-for="(widget, index) in dashboard.widgets.slice(0, 4)" :key="index" class="preview-widget">
-                  <p class="widget-name">{{ widget.name }}</p>
+                  <span class="widget-name">{{ widget.name }}</span>
+                  <template v-if="getDashboardWidgetType(widget) === 'revenue'">
+                    <div class="widget-mini-bars">
+                      <div v-for="bar in revenueWidgetBars" :key="bar.label" class="widget-mini-bar-row">
+                        <span>{{ bar.label }}</span>
+                        <div class="widget-mini-bar-track">
+                          <div class="widget-mini-bar fill-revenue" :style="{ width: `${getBarPercent(bar.value, revenueWidgetMax)}%` }"></div>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <template v-else-if="getDashboardWidgetType(widget) === 'bookings'">
+                    <div class="widget-mini-bars">
+                      <div v-for="bar in bookingsWidgetBars" :key="bar.label" class="widget-mini-bar-row">
+                        <span>{{ bar.label }}</span>
+                        <div class="widget-mini-bar-track">
+                          <div class="widget-mini-bar fill-bookings" :style="{ width: `${getBarPercent(bar.value, bookingsWidgetMax)}%` }"></div>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <template v-else-if="getDashboardWidgetType(widget) === 'operators'">
+                    <div class="widget-mini-list">
+                      <div v-for="operator in operatorWidgetItems.slice(0, 2)" :key="operator.rank || operator.business_name" class="widget-mini-list-item">
+                        <strong>{{ operator.business_name || 'Operator' }}</strong>
+                        <span>{{ operator.avg_rating || operator.average_rating || 0 }}★</span>
+                      </div>
+                    </div>
+                  </template>
+                  <template v-else-if="getDashboardWidgetType(widget) === 'satisfaction'">
+                    <div class="widget-mini-score">
+                      <strong>{{ satisfactionWidget.rating }}</strong>
+                      <div class="widget-mini-bar-track">
+                        <div class="widget-mini-bar fill-satisfaction" :style="{ width: `${satisfactionWidget.percent}%` }"></div>
+                      </div>
+                    </div>
+                  </template>
+                  <template v-else-if="getDashboardWidgetType(widget) === 'metrics'">
+                    <div class="widget-mini-metrics">
+                      <div v-for="item in keyMetricItems.slice(0, 2)" :key="item.label" class="widget-mini-metric-pill">
+                        <strong>{{ item.value }}</strong>
+                        <span>{{ item.label }}</span>
+                      </div>
+                    </div>
+                  </template>
                 </div>
               </div>
             </div>
@@ -466,11 +516,12 @@
             <div class="dashboard-info">
               <h4>{{ dashboard.name }}</h4>
               <p class="dashboard-meta">{{ dashboard.widgets.length }} widgets • Created {{ formatDate(dashboard.created_at) }}</p>
+              <p v-if="dashboard.description" class="dashboard-description">{{ dashboard.description }}</p>
             </div>
 
             <div class="dashboard-actions">
               <button @click="editDashboard(dashboard)" class="btn btn-small btn-secondary">✏️ Edit</button>
-              <button @click="viewDashboard(dashboard)" class="btn btn-small">👁️ View</button>
+              <button @click="openDashboardPage(dashboard)" class="btn btn-small">👁️ View</button>
               <button @click="shareDashboard(dashboard)" class="btn btn-small">🔗 Share</button>
               <button @click="deleteDashboard(dashboard)" class="btn btn-small btn-danger">🗑️</button>
             </div>
@@ -573,8 +624,8 @@
     <div v-if="showDashboardModal" class="modal-overlay" @click.self="showDashboardModal = false">
       <div class="modal-content">
         <div class="modal-header">
-          <h2>Create New Dashboard</h2>
-          <button @click="showDashboardModal = false" class="close-btn">✕</button>
+          <h2>{{ dashboardModalMode === 'edit' ? 'Edit Dashboard' : 'Create New Dashboard' }}</h2>
+          <button @click="closeDashboardModal" class="close-btn">✕</button>
         </div>
 
         <form @submit.prevent="saveDashboard" class="modal-body">
@@ -591,34 +642,212 @@
           <div class="form-group">
             <label>Select Widgets</label>
             <div class="checkbox-group">
-              <label>
-                <input v-model="dashboardForm.widgets" type="checkbox" value="revenue" />
-                <span>Revenue Chart</span>
-              </label>
-              <label>
-                <input v-model="dashboardForm.widgets" type="checkbox" value="bookings" />
-                <span>Bookings Graph</span>
-              </label>
-              <label>
-                <input v-model="dashboardForm.widgets" type="checkbox" value="operators" />
-                <span>Top Operators</span>
-              </label>
-              <label>
-                <input v-model="dashboardForm.widgets" type="checkbox" value="satisfaction" />
-                <span>Satisfaction Scores</span>
-              </label>
-              <label>
-                <input v-model="dashboardForm.widgets" type="checkbox" value="metrics" />
-                <span>Key Metrics</span>
+              <label v-for="option in dashboardWidgetOptions" :key="option.value">
+                <input v-model="dashboardForm.widgets" type="checkbox" :value="option.value" />
+                <span>{{ option.label }}</span>
               </label>
             </div>
           </div>
 
           <div class="form-actions">
-            <button type="button" @click="showDashboardModal = false" class="btn btn-secondary">Cancel</button>
-            <button type="submit" class="btn btn-primary">Create Dashboard</button>
+            <button type="button" @click="closeDashboardModal" class="btn btn-secondary">Cancel</button>
+            <button type="submit" class="btn btn-primary">{{ dashboardModalMode === 'edit' ? 'Save Changes' : 'Create Dashboard' }}</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <div v-if="showDashboardPreviewModal" class="modal-overlay" @click.self="closeDashboardPreview">
+      <div class="modal-content dashboard-preview-modal">
+        <div class="modal-header">
+          <div>
+            <h2>{{ selectedDashboardPreview?.name || 'Dashboard Preview' }}</h2>
+            <p class="report-preview-subtitle">{{ selectedDashboardPreview?.description || 'Live dashboard configuration preview' }}</p>
+          </div>
+          <button @click="closeDashboardPreview" class="close-btn">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <div v-if="dashboardPreviewLoading" class="status-message">Loading dashboard...</div>
+          <div v-else-if="dashboardPreviewError" class="error-message">{{ dashboardPreviewError }}</div>
+          <div v-else-if="selectedDashboardPreview" class="report-preview-content">
+            <div class="report-preview-meta">
+              <div>
+                <span class="report-preview-label">Widgets</span>
+                <strong>{{ selectedDashboardPreview.widgets.length }}</strong>
+              </div>
+              <div>
+                <span class="report-preview-label">Created</span>
+                <strong>{{ formatDate(selectedDashboardPreview.created_at) }}</strong>
+              </div>
+              <div>
+                <span class="report-preview-label">Shared with</span>
+                <strong>{{ selectedDashboardPreview.shared_with?.length || 0 }} recipients</strong>
+              </div>
+            </div>
+
+            <div class="dashboard-preview-grid">
+              <div v-for="widget in selectedDashboardPreview.widgets" :key="widget.key || widget.name" class="dashboard-preview-tile">
+                <span class="report-preview-label">Widget</span>
+                <strong>{{ widget.name }}</strong>
+                <div v-if="getDashboardWidgetType(widget) === 'revenue'" class="dashboard-widget-panel">
+                  <div class="dashboard-stat-inline">
+                    <span>Total Revenue</span>
+                    <strong>{{ formatCompactNumber(dashboardFinancial.totalRevenue) }}</strong>
+                  </div>
+                  <div class="dashboard-chart-list">
+                    <div v-for="bar in revenueWidgetBars" :key="bar.label" class="dashboard-chart-row">
+                      <span>{{ bar.label }}</span>
+                      <div class="widget-mini-bar-track large">
+                        <div class="widget-mini-bar fill-revenue" :style="{ width: `${getBarPercent(bar.value, revenueWidgetMax)}%` }"></div>
+                      </div>
+                      <strong>{{ formatCompactNumber(bar.value) }}</strong>
+                    </div>
+                  </div>
+                </div>
+                <div v-else-if="getDashboardWidgetType(widget) === 'bookings'" class="dashboard-widget-panel">
+                  <div class="dashboard-chart-list">
+                    <div v-for="bar in bookingsWidgetBars" :key="bar.label" class="dashboard-chart-row">
+                      <span>{{ bar.label }}</span>
+                      <div class="widget-mini-bar-track large">
+                        <div class="widget-mini-bar fill-bookings" :style="{ width: `${getBarPercent(bar.value, bookingsWidgetMax)}%` }"></div>
+                      </div>
+                      <strong>{{ bar.value }}</strong>
+                    </div>
+                  </div>
+                </div>
+                <div v-else-if="getDashboardWidgetType(widget) === 'operators'" class="dashboard-widget-panel">
+                  <div class="widget-operator-list">
+                    <div v-for="operator in operatorWidgetItems.slice(0, 4)" :key="operator.rank || operator.business_name" class="widget-operator-row">
+                      <span>#{{ operator.rank || '-' }} {{ operator.business_name || 'Operator' }}</span>
+                      <strong>{{ operator.avg_rating || operator.average_rating || 0 }}★</strong>
+                    </div>
+                  </div>
+                </div>
+                <div v-else-if="getDashboardWidgetType(widget) === 'satisfaction'" class="dashboard-widget-panel">
+                  <div class="dashboard-stat-inline">
+                    <span>Average rating</span>
+                    <strong>{{ satisfactionWidget.rating }}</strong>
+                  </div>
+                  <div class="widget-mini-bar-track large">
+                    <div class="widget-mini-bar fill-satisfaction" :style="{ width: `${satisfactionWidget.percent}%` }"></div>
+                  </div>
+                  <p class="widget-panel-note">Across {{ dashboardStats.operators?.total_profiles || 0 }} operator profiles.</p>
+                </div>
+                <div v-else-if="getDashboardWidgetType(widget) === 'metrics'" class="dashboard-widget-panel metric-grid-panel">
+                  <div v-for="item in keyMetricItems" :key="item.label" class="widget-metric-card">
+                    <strong>{{ item.value }}</strong>
+                    <span>{{ item.label }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="selectedDashboardPreview.shared_with?.length" class="dashboard-share-list">
+              <h3>Shared With</h3>
+              <p>{{ selectedDashboardPreview.shared_with.join(', ') }}</p>
+            </div>
+
+            <div class="form-actions">
+              <button type="button" @click="closeDashboardPreview" class="btn btn-secondary">Close</button>
+              <button type="button" @click="shareDashboard(selectedDashboardPreview)" class="btn btn-primary">Manage Sharing</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showDashboardShareModal" class="modal-overlay" @click.self="closeDashboardShareModal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Share Dashboard</h2>
+          <button @click="closeDashboardShareModal" class="close-btn">✕</button>
+        </div>
+
+        <form @submit.prevent="saveDashboardSharing" class="modal-body">
+          <div class="form-group">
+            <label>Recipients (comma-separated emails)</label>
+            <textarea v-model="dashboardShareRecipients" class="textarea" rows="3" placeholder="ops@tourapp.local, leadership@tourapp.local"></textarea>
+          </div>
+
+          <div class="form-actions">
+            <button type="button" @click="closeDashboardShareModal" class="btn btn-secondary">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save Sharing</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div v-if="showReportPreviewModal" class="modal-overlay" @click.self="closeReportPreview">
+      <div class="modal-content report-preview-modal">
+        <div class="modal-header">
+          <div>
+            <h2>{{ selectedReportPreview?.report?.name || 'Report Preview' }}</h2>
+            <p class="report-preview-subtitle">{{ selectedReportPreview?.summary || 'Live report detail preview' }}</p>
+          </div>
+          <button @click="closeReportPreview" class="close-btn">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <div v-if="reportPreviewLoading" class="status-message">Loading report preview...</div>
+          <div v-else-if="reportPreviewError" class="error-message">{{ reportPreviewError }}</div>
+          <div v-else-if="selectedReportPreview" class="report-preview-content">
+            <div class="report-preview-meta">
+              <div>
+                <span class="report-preview-label">Type</span>
+                <strong>{{ selectedReportPreview.report.type }}</strong>
+              </div>
+              <div>
+                <span class="report-preview-label">Status</span>
+                <strong>{{ getStatusLabel(selectedReportPreview.report.status) }}</strong>
+              </div>
+              <div>
+                <span class="report-preview-label">Generated by</span>
+                <strong>{{ selectedReportPreview.report.generated_by }}</strong>
+              </div>
+              <div>
+                <span class="report-preview-label">Generated at</span>
+                <strong>{{ formatDateTime(selectedReportPreview.generated_at) }}</strong>
+              </div>
+            </div>
+
+            <div v-for="section in selectedReportPreview.sections" :key="section.title" class="report-preview-section">
+              <h3>{{ section.title }}</h3>
+
+              <div v-if="section.kind === 'stats'" class="report-preview-stats">
+                <div v-for="item in section.items" :key="item.label" class="report-preview-stat-card">
+                  <span class="report-preview-label">{{ item.label }}</span>
+                  <strong>{{ item.value }}</strong>
+                </div>
+              </div>
+
+              <div v-else-if="section.kind === 'table'" class="report-preview-table-wrapper">
+                <table class="report-preview-table">
+                  <thead>
+                    <tr>
+                      <th v-for="column in section.columns" :key="column">{{ column }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(row, rowIndex) in section.rows" :key="`${section.title}-${rowIndex}`">
+                      <td v-for="(cell, cellIndex) in row" :key="`${section.title}-${rowIndex}-${cellIndex}`">{{ cell }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <select v-model="reportDownloadFormat" class="filter-select report-preview-format-select">
+                <option v-for="option in reportDownloadFormats" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+              <button type="button" @click="closeReportPreview" class="btn btn-secondary">Close</button>
+              <button type="button" @click="downloadReport(selectedReportPreview.report)" class="btn btn-primary">Download {{ selectedDownloadFormatLabel }}</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -626,11 +855,15 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import api from '../services/api'
+import { adminBrandConfig } from '../config/adminBrand'
 
 const activeTab = ref('builder')
 const loading = ref(false)
 const loadError = ref('')
+const adminBrand = adminBrandConfig
+const router = useRouter()
 
 // Report Builder
 const prebuiltTemplates = ref([
@@ -692,6 +925,25 @@ const reportFilters = ref({
   type: '',
   status: ''
 })
+const reportDownloadFormats = [
+  { value: 'json', label: 'JSON' },
+  { value: 'csv', label: 'CSV' },
+  { value: 'pdf', label: 'PDF' },
+]
+const dashboardWidgetOptions = [
+  { value: 'revenue', label: 'Revenue Chart' },
+  { value: 'bookings', label: 'Bookings Graph' },
+  { value: 'operators', label: 'Top Operators' },
+  { value: 'satisfaction', label: 'Satisfaction Scores' },
+  { value: 'metrics', label: 'Key Metrics' },
+]
+const dashboardWidgetLabelMap = Object.fromEntries(dashboardWidgetOptions.map((option) => [option.value, option.label]))
+const dashboardWidgetNameToKey = Object.fromEntries(dashboardWidgetOptions.map((option) => [option.label.toLowerCase(), option.value]))
+const reportDownloadFormat = ref('json')
+
+const selectedDownloadFormatLabel = computed(() => {
+  return reportDownloadFormats.find((option) => option.value === reportDownloadFormat.value)?.label || 'JSON'
+})
 
 const filteredReports = computed(() => {
   return reports.value.filter(report => {
@@ -710,7 +962,7 @@ const scheduledReports = ref([
     _id: '1',
     report_name: 'Monthly Revenue Report',
     frequency: 'Monthly',
-    recipients: ['admin@tourapp.com', 'finance@tourapp.com'],
+    recipients: [adminBrand.emails.admin, adminBrand.emails.finance],
     format: 'PDF',
     status: 'active',
     next_run: new Date('2026-03-06'),
@@ -720,7 +972,7 @@ const scheduledReports = ref([
     _id: '2',
     report_name: 'Weekly Performance Summary',
     frequency: 'Weekly',
-    recipients: ['managers@tourapp.com'],
+    recipients: [adminBrand.emails.managers],
     format: 'Excel',
     status: 'active',
     next_run: new Date('2026-02-13'),
@@ -790,14 +1042,31 @@ const dashboards = ref([
       { name: 'Performance Metrics' }
     ],
     created_at: new Date('2026-02-03'),
-    shared_with: ['team@tourapp.com']
+    shared_with: [adminBrand.emails.team]
   }
 ])
+const dashboardStats = ref({ users: {}, quotes: {}, operators: {}, tickets: {} })
+const dashboardMetricsData = ref({ user_growth: [], quote_trend: [], top_destinations: [], top_states: [] })
+const dashboardFinancial = ref({ totalRevenue: 0, monthlyRevenue: 0, pendingPayouts: 0, commissionCollected: 0 })
+const dashboardLeaderboard = ref([])
 
 // Modals & Forms
 const showNewReportModal = ref(false)
 const showScheduleModal = ref(false)
 const showDashboardModal = ref(false)
+const showReportPreviewModal = ref(false)
+const showDashboardPreviewModal = ref(false)
+const showDashboardShareModal = ref(false)
+const reportPreviewLoading = ref(false)
+const reportPreviewError = ref('')
+const selectedReportPreview = ref(null)
+const dashboardPreviewLoading = ref(false)
+const dashboardPreviewError = ref('')
+const selectedDashboardPreview = ref(null)
+const dashboardModalMode = ref('create')
+const editingDashboardId = ref(null)
+const sharingDashboardId = ref(null)
+const dashboardShareRecipients = ref('')
 
 const newReportForm = ref({
   name: '',
@@ -837,9 +1106,14 @@ const loadReportsSummary = async () => {
       return
     }
 
-    const response = await api.get('/admin/reports/summary', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
+    const config = { headers: { Authorization: `Bearer ${token}` } }
+    const [response, statsResponse, metricsResponse, financialResponse, leaderboardResponse] = await Promise.all([
+      api.get('/admin/reports/summary', config),
+      api.get('/admin/dashboard/stats', config),
+      api.get('/admin/dashboard/metrics', config),
+      api.get('/admin/financial/overview', config),
+      api.get('/admin/operators/leaderboard?limit=5', config),
+    ])
 
     const data = response.data || {}
 
@@ -858,6 +1132,11 @@ const loadReportsSummary = async () => {
     if (Array.isArray(data.dashboards)) {
       dashboards.value = data.dashboards
     }
+
+    dashboardStats.value = statsResponse.data || { users: {}, quotes: {}, operators: {}, tickets: {} }
+    dashboardMetricsData.value = metricsResponse.data || { user_growth: [], quote_trend: [], top_destinations: [], top_states: [] }
+    dashboardFinancial.value = financialResponse.data || { totalRevenue: 0, monthlyRevenue: 0, pendingPayouts: 0, commissionCollected: 0 }
+    dashboardLeaderboard.value = leaderboardResponse.data?.leaderboard || leaderboardResponse.data?.operators || []
   } catch (error) {
     console.error('Failed to load reports summary:', error)
     loadError.value = error.response?.data?.detail || 'Failed to load reports data'
@@ -922,12 +1201,121 @@ const applyQuickFilter = (filter) => {
   alert(`Applied quick filter: ${filter}`)
 }
 
-const viewReport = (report) => {
-  alert(`Viewing report: ${report.name}`)
+const extractDownloadFilename = (contentDisposition, fallbackName, format) => {
+  const match = /filename="?([^";]+)"?/i.exec(contentDisposition || '')
+  return match?.[1] || `${fallbackName || 'report'}.${format || 'json'}`
 }
 
-const downloadReport = (report) => {
-  alert(`Downloading report: ${report.name}`)
+const formatCompactNumber = (value) => {
+  const numericValue = Number(value || 0)
+  return new Intl.NumberFormat('en-IN', { notation: 'compact', maximumFractionDigits: 1 }).format(numericValue)
+}
+
+const getDashboardWidgetType = (widget) => normalizeDashboardWidgetKey(widget)
+
+const getBarPercent = (value, maxValue) => {
+  if (!maxValue) return 0
+  return Math.max(8, Math.round((Number(value || 0) / maxValue) * 100))
+}
+
+const revenueWidgetBars = computed(() => ([
+  { label: 'Total', value: dashboardFinancial.value.totalRevenue || 0 },
+  { label: 'Month', value: dashboardFinancial.value.monthlyRevenue || 0 },
+  { label: 'Commission', value: dashboardFinancial.value.commissionCollected || 0 },
+]))
+
+const revenueWidgetMax = computed(() => Math.max(...revenueWidgetBars.value.map((item) => Number(item.value || 0)), 0))
+
+const bookingsWidgetBars = computed(() => ([
+  { label: 'Bookings', value: Number(dashboardStats.value.quotes?.total || 0) },
+  { label: 'Closed', value: Number(dashboardStats.value.quotes?.closed || 0) },
+  { label: 'Open', value: Number(dashboardStats.value.quotes?.open || 0) },
+]))
+
+const bookingsWidgetMax = computed(() => Math.max(...bookingsWidgetBars.value.map((item) => Number(item.value || 0)), 0))
+
+const operatorWidgetItems = computed(() => dashboardLeaderboard.value || [])
+
+const satisfactionWidget = computed(() => {
+  const rating = Number(dashboardStats.value.operators?.avg_rating || 0)
+  return {
+    rating: `${rating.toFixed(1)} / 5`,
+    percent: Math.max(6, Math.round((rating / 5) * 100)),
+  }
+})
+
+const keyMetricItems = computed(() => ([
+  { label: 'Tourists', value: Number(dashboardStats.value.users?.tourists || 0) },
+  { label: 'Operators', value: Number(dashboardStats.value.users?.operators || 0) },
+  { label: 'Quotes', value: Number(dashboardStats.value.quotes?.total || 0) },
+  { label: 'Tickets', value: Number(dashboardStats.value.tickets?.open || 0) },
+]))
+
+const normalizeDashboardWidgetKey = (widget) => {
+  if (!widget) return ''
+  if (typeof widget === 'string') return widget.toLowerCase()
+  if (widget.key) return String(widget.key).toLowerCase()
+  if (widget.name) return dashboardWidgetNameToKey[String(widget.name).toLowerCase()] || String(widget.name).toLowerCase()
+  return ''
+}
+
+const serializeDashboardWidgets = (widgetKeys) => {
+  return widgetKeys.map((key) => ({
+    key,
+    name: dashboardWidgetLabelMap[key] || key,
+  }))
+}
+
+const closeReportPreview = () => {
+  showReportPreviewModal.value = false
+  reportPreviewLoading.value = false
+  reportPreviewError.value = ''
+  selectedReportPreview.value = null
+}
+
+const viewReport = async (report) => {
+  showReportPreviewModal.value = true
+  reportPreviewLoading.value = true
+  reportPreviewError.value = ''
+  selectedReportPreview.value = null
+
+  try {
+    const response = await api.get(`/admin/reports/${report._id}`, getAdminConfig())
+    selectedReportPreview.value = response.data
+  } catch (error) {
+    reportPreviewError.value = error.response?.data?.detail || error.message || 'Failed to load report preview'
+  } finally {
+    reportPreviewLoading.value = false
+  }
+}
+
+const downloadReport = async (report) => {
+  const requestedFormat = reportDownloadFormat.value || 'json'
+
+  try {
+    const response = await api.get(`/admin/reports/${report._id}/download?format=${requestedFormat}`, {
+      ...getAdminConfig(),
+      responseType: 'blob'
+    })
+
+    const filename = extractDownloadFilename(
+      response.headers['content-disposition'],
+      report.name?.toLowerCase().replace(/\s+/g, '-') || 'report',
+      requestedFormat
+    )
+
+    const blob = new Blob([response.data], { type: response.headers['content-type'] || 'application/json' })
+    const downloadUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = downloadUrl
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(downloadUrl)
+  } catch (error) {
+    alert(error.response?.data?.detail || error.message || 'Failed to download report')
+  }
 }
 
 const duplicateReport = (report) => {
@@ -1057,44 +1445,133 @@ const configureEmail = () => {
   alert('Email configuration panel')
 }
 
-const editDashboard = (dashboard) => {
-  alert(`Editing dashboard: ${dashboard.name}`)
+const openCreateDashboardModal = () => {
+  dashboardModalMode.value = 'create'
+  editingDashboardId.value = null
+  dashboardForm.value = { name: '', description: '', widgets: [] }
+  showDashboardModal.value = true
 }
 
-const viewDashboard = (dashboard) => {
-  alert(`Viewing dashboard: ${dashboard.name}`)
+const closeDashboardModal = () => {
+  showDashboardModal.value = false
+  dashboardModalMode.value = 'create'
+  editingDashboardId.value = null
+  dashboardForm.value = { name: '', description: '', widgets: [] }
+}
+
+const editDashboard = (dashboard) => {
+  dashboardModalMode.value = 'edit'
+  editingDashboardId.value = dashboard._id
+  dashboardForm.value = {
+    name: dashboard.name || '',
+    description: dashboard.description || '',
+    widgets: (dashboard.widgets || []).map(normalizeDashboardWidgetKey).filter(Boolean),
+  }
+  showDashboardModal.value = true
+}
+
+const closeDashboardPreview = () => {
+  showDashboardPreviewModal.value = false
+  dashboardPreviewLoading.value = false
+  dashboardPreviewError.value = ''
+  selectedDashboardPreview.value = null
+}
+
+const openDashboardPage = (dashboard) => {
+  if (!dashboard?._id) {
+    alert('Dashboard id is missing')
+    return
+  }
+
+  router.push({
+    name: 'AdminReportDashboard',
+    params: { dashboardId: dashboard._id },
+  })
+}
+
+const closeDashboardShareModal = () => {
+  showDashboardShareModal.value = false
+  sharingDashboardId.value = null
+  dashboardShareRecipients.value = ''
 }
 
 const shareDashboard = (dashboard) => {
-  alert(`Share dashboard: ${dashboard.name}`)
+  sharingDashboardId.value = dashboard._id
+  dashboardShareRecipients.value = (dashboard.shared_with || []).join(', ')
+  showDashboardShareModal.value = true
 }
 
-const deleteDashboard = (dashboard) => {
-  if (confirm(`Delete dashboard "${dashboard.name}"?`)) {
-    const index = dashboards.value.findIndex(d => d._id === dashboard._id)
-    if (index > -1) dashboards.value.splice(index, 1)
-    alert('Dashboard deleted')
+const saveDashboardSharing = async () => {
+  if (!sharingDashboardId.value) {
+    return
+  }
+
+  try {
+    const sharedWith = dashboardShareRecipients.value.split(',').map((item) => item.trim()).filter(Boolean)
+    await api.patch(`/admin/reports/dashboards/${sharingDashboardId.value}`, {
+      shared_with: sharedWith,
+    }, getAdminConfig())
+    await loadReportsSummary()
+    if (selectedDashboardPreview.value && selectedDashboardPreview.value._id === sharingDashboardId.value) {
+      selectedDashboardPreview.value = {
+        ...selectedDashboardPreview.value,
+        shared_with: sharedWith,
+      }
+    }
+    closeDashboardShareModal()
+    alert('Dashboard sharing updated')
+  } catch (error) {
+    alert(error.response?.data?.detail || error.message || 'Failed to update dashboard sharing')
   }
 }
 
-const saveDashboard = () => {
+const deleteDashboard = async (dashboard) => {
+  if (confirm(`Delete dashboard "${dashboard.name}"?`)) {
+    try {
+      await api.delete(`/admin/reports/dashboards/${dashboard._id}`, getAdminConfig())
+      await loadReportsSummary()
+      if (selectedDashboardPreview.value?._id === dashboard._id) {
+        closeDashboardPreview()
+      }
+      alert('Dashboard deleted')
+    } catch (error) {
+      alert(error.response?.data?.detail || error.message || 'Failed to delete dashboard')
+    }
+  }
+}
+
+const saveDashboard = async () => {
   if (!dashboardForm.value.name || dashboardForm.value.widgets.length === 0) {
     alert('Please fill in name and select at least one widget')
     return
   }
-  
-  const dashboard = {
-    _id: Date.now().toString(),
+
+  const payload = {
     name: dashboardForm.value.name,
-    widgets: dashboardForm.value.widgets.map(w => ({ name: w })),
-    created_at: new Date(),
-    shared_with: []
+    description: dashboardForm.value.description,
+    widgets: serializeDashboardWidgets(dashboardForm.value.widgets),
   }
-  
-  dashboards.value.unshift(dashboard)
-  alert(`Dashboard "${dashboard.name}" created successfully!`)
-  showDashboardModal.value = false
-  dashboardForm.value = { name: '', description: '', widgets: [] }
+
+  try {
+    if (dashboardModalMode.value === 'edit' && editingDashboardId.value) {
+      await api.patch(`/admin/reports/dashboards/${editingDashboardId.value}`, payload, getAdminConfig())
+      alert(`Dashboard "${dashboardForm.value.name}" updated successfully!`)
+    } else {
+      const response = await api.post('/admin/reports/dashboards', payload, getAdminConfig())
+      alert(`Dashboard "${dashboardForm.value.name}" created successfully!`)
+      const createdDashboardId = response.data?.dashboard?._id
+      if (createdDashboardId) {
+        router.push({
+          name: 'AdminReportDashboard',
+          params: { dashboardId: createdDashboardId },
+        })
+      }
+    }
+    await loadReportsSummary()
+    closeDashboardModal()
+  } catch (error) {
+    alert(error.response?.data?.detail || error.message || 'Failed to save dashboard')
+  }
 }
 </script>
 
@@ -1639,14 +2116,124 @@ const saveDashboard = () => {
   border: 1px solid #e2e8f0;
   border-radius: 6px;
   padding: 0.75rem;
-  text-align: center;
+  text-align: left;
 }
 
 .widget-name {
-  margin: 0;
+  display: block;
+  margin-bottom: 0.45rem;
   font-size: 0.75rem;
   color: #718096;
   font-weight: 600;
+}
+
+.widget-mini-bars,
+.widget-mini-list,
+.widget-mini-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.widget-mini-bar-row,
+.widget-mini-list-item,
+.widget-mini-metric-pill,
+.widget-operator-row,
+.dashboard-stat-inline,
+.dashboard-chart-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.widget-mini-bar-row span,
+.widget-mini-list-item span,
+.widget-mini-metric-pill span,
+.widget-operator-row span,
+.dashboard-stat-inline span,
+.dashboard-chart-row span,
+.widget-panel-note {
+  font-size: 0.72rem;
+  color: #718096;
+}
+
+.widget-mini-bar-track {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.widget-mini-bar-track.large {
+  height: 10px;
+}
+
+.widget-mini-bar {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.fill-revenue {
+  background: linear-gradient(90deg, #0f766e 0%, #14b8a6 100%);
+}
+
+.fill-bookings {
+  background: linear-gradient(90deg, #1d4ed8 0%, #60a5fa 100%);
+}
+
+.fill-satisfaction {
+  background: linear-gradient(90deg, #b45309 0%, #f59e0b 100%);
+}
+
+.widget-mini-list-item strong,
+.widget-mini-metric-pill strong,
+.widget-operator-row strong,
+.dashboard-stat-inline strong,
+.dashboard-chart-row strong,
+.widget-mini-score strong,
+.widget-metric-card strong {
+  color: #1a202c;
+  font-size: 0.78rem;
+}
+
+.widget-mini-score {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.widget-mini-metric-pill,
+.widget-metric-card {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.dashboard-widget-panel {
+  margin-top: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.dashboard-chart-list,
+.widget-operator-list,
+.metric-grid-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.metric-grid-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.widget-panel-note {
+  margin: 0;
 }
 
 .dashboard-info h4 {
@@ -1660,10 +2247,51 @@ const saveDashboard = () => {
   color: #718096;
 }
 
+.dashboard-description {
+  margin: -1rem 0 1.25rem 0;
+  font-size: 0.9rem;
+  color: #4a5568;
+}
+
 .dashboard-actions {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.dashboard-preview-modal {
+  max-width: 680px;
+}
+
+.dashboard-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.dashboard-preview-tile {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 1rem;
+  background: #fff;
+}
+
+.dashboard-share-list {
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.dashboard-share-list h3,
+.dashboard-share-list p {
+  margin: 0;
+}
+
+.dashboard-share-list h3 {
+  margin-bottom: 0.5rem;
+  color: #1a202c;
+  font-size: 1rem;
 }
 
 /* Modal */
@@ -1688,6 +2316,88 @@ const saveDashboard = () => {
   width: 100%;
   max-height: 90vh;
   overflow-y: auto;
+}
+
+.report-preview-modal {
+  max-width: 720px;
+}
+
+.report-preview-subtitle {
+  margin: 0.35rem 0 0 0;
+  color: #718096;
+  font-size: 0.9rem;
+}
+
+.report-preview-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.report-preview-format-select {
+  min-width: 140px;
+}
+
+.report-preview-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.report-preview-label {
+  display: block;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #718096;
+  margin-bottom: 0.35rem;
+}
+
+.report-preview-section h3 {
+  margin: 0 0 0.75rem 0;
+  color: #1a202c;
+  font-size: 1rem;
+}
+
+.report-preview-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.report-preview-stat-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+  background: white;
+}
+
+.report-preview-table-wrapper {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+
+.report-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.report-preview-table th,
+.report-preview-table td {
+  padding: 0.8rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.report-preview-table th {
+  background: #f8fafc;
+  color: #4a5568;
+  font-size: 0.85rem;
 }
 
 .modal-header {
@@ -1785,6 +2495,15 @@ const saveDashboard = () => {
 
   .date-range .input {
     width: 100%;
+  }
+
+  .report-preview-meta,
+  .report-preview-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-preview-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

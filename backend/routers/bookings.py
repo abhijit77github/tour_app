@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import List
 from bson import ObjectId
 from ..models.booking import (
@@ -9,8 +9,41 @@ from ..models.booking import (
 )
 from ..database import get_database
 from ..routers.auth import get_current_user
+from ..utils.cursor_pagination import build_desc_created_cursor_match, decode_datetime_objectid_cursor, encode_datetime_objectid_cursor
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
+
+
+async def _refresh_operator_rating_summary(db, operator_id: str) -> None:
+    summary = await db.ratings.aggregate(
+        [
+            {"$match": {"operator_id": operator_id}},
+            {
+                "$group": {
+                    "_id": "$operator_id",
+                    "average_rating": {"$avg": "$rating"},
+                    "total_reviews": {"$sum": 1},
+                }
+            },
+        ]
+    ).to_list(length=1)
+
+    payload = {"average_rating": 0, "total_reviews": 0}
+    if summary:
+        payload = {
+            "average_rating": round(summary[0].get("average_rating", 0), 2),
+            "total_reviews": summary[0].get("total_reviews", 0),
+        }
+
+    try:
+        operator_object_id = ObjectId(operator_id)
+    except Exception:
+        return
+
+    await db.operator_profiles.update_one(
+        {"_id": operator_object_id},
+        {"$set": payload},
+    )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -54,7 +87,11 @@ async def create_booking(
 
 
 @router.get("/my-bookings")
-async def get_my_bookings(current_user: dict = Depends(get_current_user)):
+async def get_my_bookings(
+    cursor: str | None = None,
+    page_size: int = Query(default=12, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+):
     """Get all bookings for current user"""
     db = await get_database()
     
@@ -64,19 +101,92 @@ async def get_my_bookings(current_user: dict = Depends(get_current_user)):
         # Get operator profile first
         operator_profile = await db.operator_profiles.find_one({"user_id": str(current_user["_id"])})
         if not operator_profile:
-            return {"bookings": [], "count": 0}
+            return {
+                "bookings": [],
+                "count": 0,
+                "pagination": {
+                    "page_size": page_size,
+                    "total_items": 0,
+                    "next_cursor": None,
+                    "has_more": False,
+                },
+            }
         query = {"operator_id": str(operator_profile["_id"])}
     else:
         raise HTTPException(status_code=400, detail="Invalid user type")
     
+    total_items = await db.bookings.count_documents(query)
+    status_counts = {"all": total_items, "pending": 0, "confirmed": 0, "completed": 0, "cancelled": 0}
+    status_rows = await db.bookings.aggregate(
+        [
+            {"$match": query},
+            {
+                "$group": {
+                    "_id": "$booking_status.status",
+                    "count": {"$sum": 1},
+                }
+            },
+        ]
+    ).to_list(length=None)
+    for row in status_rows:
+        status_key = row.get("_id") or "unknown"
+        status_counts[status_key] = row.get("count", 0)
+
+    effective_query = dict(query)
+    if cursor:
+        try:
+            cursor_created_at, cursor_object_id = decode_datetime_objectid_cursor(cursor)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+        effective_query["$and"] = [
+            build_desc_created_cursor_match(created_at=cursor_created_at, object_id=cursor_object_id)
+        ]
+
     bookings = []
-    cursor = db.bookings.find(query).sort("created_at", -1)
-    
-    async for booking in cursor:
+    operator_ids = set()
+    rows = await db.bookings.find(effective_query).sort([("created_at", -1), ("_id", -1)]).limit(page_size + 1).to_list(length=page_size + 1)
+    has_more = len(rows) > page_size
+    rows = rows[:page_size]
+    next_cursor = None
+    if has_more and rows:
+        last_row = rows[-1]
+        next_cursor = encode_datetime_objectid_cursor(created_at=last_row["created_at"], object_id=last_row["_id"])
+
+    for booking in rows:
         booking["_id"] = str(booking["_id"])
+        if booking.get("operator_id"):
+            operator_ids.add(booking["operator_id"])
         bookings.append(booking)
+
+    operator_name_by_id = {}
+    valid_operator_object_ids = []
+    for operator_id in operator_ids:
+        try:
+            valid_operator_object_ids.append(ObjectId(operator_id))
+        except Exception:
+            continue
+
+    if valid_operator_object_ids:
+        async for profile in db.operator_profiles.find({"_id": {"$in": valid_operator_object_ids}}):
+            operator_name_by_id[str(profile["_id"])] = profile.get("business_name", "Unknown Operator")
+
+    for booking in bookings:
+        booking["operator_name"] = operator_name_by_id.get(
+            booking.get("operator_id"),
+            "Unknown Operator"
+        )
     
-    return {"bookings": bookings, "count": len(bookings)}
+    return {
+        "bookings": bookings,
+        "count": len(bookings),
+        "status_counts": status_counts,
+        "pagination": {
+            "page_size": page_size,
+            "total_items": total_items,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        },
+    }
 
 
 @router.get("/{booking_id}")
@@ -207,24 +317,8 @@ async def create_rating(
     rating_dict["created_at"] = datetime.utcnow()
     
     result = await db.ratings.insert_one(rating_dict)
-    
-    # Update operator's average rating
-    ratings = []
-    cursor = db.ratings.find({"operator_id": rating.operator_id})
-    async for r in cursor:
-        ratings.append(r["rating"])
-    
-    if ratings:
-        avg_rating = sum(ratings) / len(ratings)
-        await db.operator_profiles.update_one(
-            {"_id": ObjectId(rating.operator_id)},
-            {
-                "$set": {
-                    "average_rating": round(avg_rating, 2),
-                    "total_reviews": len(ratings)
-                }
-            }
-        )
+
+    await _refresh_operator_rating_summary(db, rating.operator_id)
     
     return {
         "message": "Rating created successfully",
@@ -233,14 +327,36 @@ async def create_rating(
 
 
 @router.get("/ratings/operator/{operator_id}")
-async def get_operator_ratings(operator_id: str):
+async def get_operator_ratings(
+    operator_id: str,
+    cursor: str | None = None,
+    page_size: int = Query(default=12, ge=1, le=100),
+):
     """Get all ratings for an operator"""
     db = await get_database()
     
+    base_query = {"operator_id": operator_id}
+    total_items = await db.ratings.count_documents(base_query)
+    effective_query = dict(base_query)
+    if cursor:
+        try:
+            cursor_created_at, cursor_object_id = decode_datetime_objectid_cursor(cursor)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+        effective_query["$and"] = [
+            build_desc_created_cursor_match(created_at=cursor_created_at, object_id=cursor_object_id)
+        ]
+
     ratings = []
-    cursor = db.ratings.find({"operator_id": operator_id}).sort("created_at", -1)
-    
-    async for rating in cursor:
+    rows = await db.ratings.find(effective_query).sort([("created_at", -1), ("_id", -1)]).limit(page_size + 1).to_list(length=page_size + 1)
+    has_more = len(rows) > page_size
+    rows = rows[:page_size]
+    next_cursor = None
+    if has_more and rows:
+        last_row = rows[-1]
+        next_cursor = encode_datetime_objectid_cursor(created_at=last_row["created_at"], object_id=last_row["_id"])
+
+    for rating in rows:
         rating["_id"] = str(rating["_id"])
         # Get tourist info
         try:
@@ -252,7 +368,16 @@ async def get_operator_ratings(operator_id: str):
         
         ratings.append(rating)
     
-    return {"ratings": ratings, "count": len(ratings)}
+    return {
+        "ratings": ratings,
+        "count": len(ratings),
+        "pagination": {
+            "page_size": page_size,
+            "total_items": total_items,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        },
+    }
 
 @router.get("/ratings/booking/{booking_id}")
 async def get_booking_rating(booking_id: str, current_user: dict = Depends(get_current_user)):
@@ -325,23 +450,7 @@ async def update_rating(
     
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Rating not found")
-    
-    # Update operator's average rating
-    ratings = []
-    cursor = db.ratings.find({"operator_id": rating["operator_id"]})
-    async for r in cursor:
-        ratings.append(r["rating"])
-    
-    if ratings:
-        avg_rating = sum(ratings) / len(ratings)
-        await db.operator_profiles.update_one(
-            {"_id": ObjectId(rating["operator_id"])},
-            {
-                "$set": {
-                    "average_rating": round(avg_rating, 2),
-                    "total_reviews": len(ratings)
-                }
-            }
-        )
+
+    await _refresh_operator_rating_summary(db, rating["operator_id"])
     
     return {"message": "Rating updated successfully"}

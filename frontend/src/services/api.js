@@ -10,7 +10,12 @@ const api = axios.create({
 // Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token')
+    const requestUrl = config.url || ''
+    const isAdminRequest = requestUrl.startsWith('/admin')
+    const token = isAdminRequest
+      ? localStorage.getItem('adminToken')
+      : localStorage.getItem('token')
+
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -25,9 +30,18 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    const requestUrl = error.config?.url || ''
+    const isAdminRequest = requestUrl.startsWith('/admin')
+
     if (error.response?.status === 401) {
-      localStorage.removeItem('token')
-      window.location.href = '/login'
+      if (isAdminRequest) {
+        localStorage.removeItem('adminToken')
+        localStorage.removeItem('adminUser')
+        window.location.href = '/admin/login'
+      } else {
+        localStorage.removeItem('token')
+        window.location.href = '/login'
+      }
     }
     return Promise.reject(error)
   }

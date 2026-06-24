@@ -95,6 +95,18 @@
             <span>{{ stats.operators?.total_profiles || 0 }} operators</span>
           </div>
         </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-icon">🎫</span>
+            <span class="metric-label">Support Tickets</span>
+          </div>
+          <div class="metric-value">{{ stats.tickets?.open || 0 }}</div>
+          <div class="metric-breakdown">
+            <span>Open: {{ stats.tickets?.open || 0 }}</span>
+            <span>Completed: {{ stats.tickets?.completed || 0 }}</span>
+          </div>
+        </div>
       </div>
 
       <!-- Charts Section -->
@@ -174,16 +186,22 @@
           <span class="icon">📈</span>
           <span>View Performance</span>
         </router-link>
+        <router-link v-if="canManageBackups" to="/admin/backups" class="action-button backups">
+          <span class="icon">💾</span>
+          <span>Backups & Restore</span>
+        </router-link>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import api from '../services/api'
+import { useAccessStore } from '../stores/access'
 
 const loading = ref(true)
+const accessStore = useAccessStore()
 const stats = ref({
   users: {},
   quotes: {},
@@ -202,6 +220,8 @@ const responseTime = ref({
   median_hours: 0
 })
 let refreshIntervalId = null
+
+const canManageBackups = computed(() => accessStore.hasAdminPermission('admin.backups.manage'))
 
 const getPercentage = (part, total) => {
   if (!total) return 0
@@ -606,6 +626,10 @@ onUnmounted(() => {
 
 .action-button.performance {
   background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+}
+
+.action-button.backups {
+  background: linear-gradient(135deg, #f59e0b 0%, #ea580c 100%);
 }
 
 .action-button:hover {

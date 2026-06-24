@@ -135,6 +135,7 @@ export default {
     const form = ref({
       email: '',
       otp: '',
+      verificationToken: '',
       newPassword: '',
       confirmPassword: ''
     })
@@ -148,6 +149,10 @@ export default {
       loading.value = true
       error.value = null
       successMessage.value = null
+      form.value.otp = ''
+      form.value.verificationToken = ''
+      form.value.newPassword = ''
+      form.value.confirmPassword = ''
 
       try {
         await axios.post(`${API_URL}/auth/forgot-password`, {
@@ -210,12 +215,18 @@ export default {
         return
       }
 
+      if (!form.value.verificationToken) {
+        error.value = 'Please verify the OTP before resetting your password'
+        return
+      }
+
       loading.value = true
 
       try {
         await axios.post(`${API_URL}/auth/reset-password`, {
           email: form.value.email,
           otp: form.value.otp,
+          verification_token: form.value.verificationToken,
           new_password: form.value.newPassword
         })
 

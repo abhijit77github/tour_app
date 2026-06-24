@@ -216,11 +216,11 @@
           </div>
 
           <!-- Serving Areas -->
-          <div v-if="selectedOperatorDetails.serving_areas?.length" class="info-section">
+          <div v-if="selectedOperatorDetails.profile?.serving_areas?.length" class="info-section">
             <h3>Serving Areas</h3>
             <div class="serving-areas">
-              <span v-for="area in selectedOperatorDetails.serving_areas" :key="area" class="area-tag">
-                📍 {{ area }}
+              <span v-for="area in selectedOperatorDetails.profile.serving_areas" :key="area" class="area-tag">
+                📍 {{ formatServingArea(area) }}
               </span>
             </div>
           </div>
@@ -235,7 +235,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import api from '../services/api'
 
 const loading = ref(true)
@@ -266,6 +266,12 @@ const formatDate = (date) => {
   return new Date(date).toLocaleDateString('en-IN')
 }
 
+const formatServingArea = (area) => {
+  if (!area) return 'N/A'
+  if (typeof area === 'string') return area
+  return area.area_name || area.name || area.state || area.country || 'N/A'
+}
+
 const fetchPerformanceData = async () => {
   try {
     loading.value = true
@@ -273,12 +279,14 @@ const fetchPerformanceData = async () => {
 
     // Fetch leaderboard
     const leaderboardRes = await api.get('/admin/operators/leaderboard', {
+      params: { metric: sortBy.value },
       headers: { Authorization: `Bearer ${token}` }
     })
-    leaderboardData.value = leaderboardRes.data.operators || []
+    leaderboardData.value = leaderboardRes.data.operators || leaderboardRes.data.leaderboard || []
 
     // Fetch metrics
     const metricsRes = await api.get('/admin/operators/performance', {
+      params: { sort_by: 'rating' },
       headers: { Authorization: `Bearer ${token}` }
     })
     metricsData.value = metricsRes.data.operators || []
@@ -295,8 +303,19 @@ const viewDetails = async (operator) => {
     const response = await api.get(`/admin/operators/${operator.profile?._id || operator._id}/performance`, {
       headers: { Authorization: `Bearer ${token}` }
     })
-    selectedOperatorDetails.value = operator
-    selectedOperatorDetails.value.performance = response.data.performance
+    const performance = response.data.performance || {}
+    selectedOperatorDetails.value = {
+      ...operator,
+      total_responses: performance.total_responses ?? operator.total_responses ?? 0,
+      avg_response_time_hours: performance.average_response_time_hours ?? operator.avg_response_time_hours ?? 0,
+      serving_areas_count: performance.serving_areas_count ?? operator.serving_areas_count ?? 0,
+      profile: {
+        ...(operator.profile || {}),
+        average_rating: performance.average_rating ?? operator.profile?.average_rating ?? 0,
+        total_reviews: performance.total_reviews ?? operator.profile?.total_reviews ?? 0
+      },
+      performance
+    }
     showDetailsModal.value = true
   } catch (error) {
     console.error('Error fetching operator details:', error)
@@ -309,6 +328,10 @@ const closeDetailsModal = () => {
 }
 
 onMounted(() => {
+  fetchPerformanceData()
+})
+
+watch(sortBy, () => {
   fetchPerformanceData()
 })
 </script>

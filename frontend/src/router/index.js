@@ -23,6 +23,7 @@ import CartView from '../views/CartView.vue'
 import AdminLogin from '../views/AdminLogin.vue'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import AdminDashboard from '../views/AdminDashboard.vue'
+import { useAccessStore } from '../stores/access'
 
 const routes = [
   {
@@ -70,7 +71,37 @@ const routes = [
     path: '/operator/quotes',
     name: 'OperatorQuoteRequests',
     component: OperatorQuoteRequests,
-    meta: { requiresAuth: true, userType: 'operator' }
+    meta: { requiresAuth: true, userType: 'operator', operatorPermission: 'operator.quotes.read' }
+  },
+  {
+    path: '/operator/itineraries',
+    name: 'OperatorItineraries',
+    component: () => import('../views/OperatorItineraries.vue'),
+    meta: { requiresAuth: true, userType: 'operator', operatorPermission: 'operator.itineraries.manage' }
+  },
+  {
+    path: '/operator/promotions',
+    name: 'OperatorPromotions',
+    component: () => import('../views/OperatorPromotions.vue'),
+    meta: { requiresAuth: true, userType: 'operator', operatorPermission: 'operator.promotions.read' }
+  },
+  {
+    path: '/operator/billing-analytics',
+    name: 'OperatorBillingAnalytics',
+    component: () => import('../views/OperatorBillingAnalytics.vue'),
+    meta: { requiresAuth: true, userType: 'operator', operatorPermission: 'operator.billing.read' }
+  },
+  {
+    path: '/operator/team',
+    name: 'OperatorTeamAccess',
+    component: () => import('../views/OperatorTeamAccess.vue'),
+    meta: { requiresAuth: true, userType: 'operator', operatorPermission: 'operator.team.manage' }
+  },
+  {
+    path: '/operator/tickets',
+    name: 'OperatorTickets',
+    component: () => import('../views/OperatorTickets.vue'),
+    meta: { requiresAuth: true, userType: 'operator', operatorPermission: 'operator.tickets.read' }
   },
   {
     path: '/tourist/dashboard',
@@ -97,6 +128,12 @@ const routes = [
     meta: { requiresAuth: true, userType: 'tourist' }
   },
   {
+    path: '/itineraries',
+    name: 'MyItineraries',
+    component: () => import('../views/ItineraryBuilder.vue'),
+    meta: { requiresAuth: true, userType: 'tourist' }
+  },
+  {
     path: '/operator/:id',
     name: 'OperatorProfile',
     component: OperatorProfile
@@ -120,6 +157,12 @@ const routes = [
     meta: { requiresAuth: true, userType: 'tourist' }
   },
   {
+    path: '/notifications',
+    name: 'NotificationCenter',
+    component: () => import('../views/NotificationCenter.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/booking/:id',
     name: 'BookingDetails',
     component: BookingDetails,
@@ -140,67 +183,97 @@ const routes = [
         path: 'dashboard',
         name: 'AdminDashboard',
         component: AdminDashboard,
-        meta: { requiresAdmin: true }
+        meta: { requiresAdmin: true, adminPermission: 'admin.dashboard.read' }
       },
       {
         path: 'tourists',
         name: 'AdminTourists',
         component: () => import('../views/AdminTourists.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresAdmin: true, adminPermission: 'admin.tourists.read' }
       },
       {
         path: 'operators',
         name: 'AdminOperators',
         component: () => import('../views/AdminOperators.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresAdmin: true, adminPermission: 'admin.operators.read' }
       },
       {
         path: 'quotes',
         name: 'AdminQuotes',
         component: () => import('../views/AdminQuotes.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresAdmin: true, adminPermission: 'admin.quotes.read' }
+      },
+      {
+        path: 'promotions',
+        name: 'AdminPromotions',
+        component: () => import('../views/AdminPromotions.vue'),
+        meta: { requiresAdmin: true, adminPermission: 'admin.operators.read' }
       },
       {
         path: 'performance',
         name: 'AdminPerformance',
         component: () => import('../views/AdminPerformance.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresAdmin: true, adminPermission: 'admin.operators.read' }
       },
       {
         path: 'reviews',
         name: 'AdminReviews',
         component: () => import('../views/AdminReviews.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresAdmin: true, adminPermission: 'admin.audit.read' }
       },
       {
         path: 'notifications',
         name: 'AdminNotifications',
         component: () => import('../views/AdminNotifications.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresAdmin: true, adminPermission: 'admin.notifications.manage' }
+      },
+      {
+        path: 'tickets',
+        name: 'AdminTickets',
+        component: () => import('../views/AdminTickets.vue'),
+        meta: { requiresAdmin: true, adminPermission: 'admin.tickets.manage' }
       },
       {
         path: 'financial',
         name: 'AdminFinancial',
         component: () => import('../views/AdminFinancial.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresAdmin: true, adminPermission: 'admin.billing.read' }
       },
       {
         path: 'audit',
         name: 'AdminAudit',
         component: () => import('../views/AdminAudit.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresAdmin: true, adminPermission: 'admin.audit.read' }
       },
       {
         path: 'reports',
         name: 'AdminReports',
         component: () => import('../views/AdminReports.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresAdmin: true, adminPermission: 'admin.reports.read' }
+      },
+      {
+        path: 'reports/dashboards/:dashboardId',
+        name: 'AdminReportDashboard',
+        component: () => import('../views/AdminReportDashboard.vue'),
+        meta: { requiresAdmin: true, adminPermission: 'admin.reports.read' }
       },
       {
         path: 'settings',
         name: 'AdminSettings',
         component: () => import('../views/AdminSettings.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresAdmin: true, adminPermission: 'admin.settings.manage' }
+      },
+      {
+        path: 'backups',
+        name: 'AdminBackups',
+        component: () => import('../views/AdminBackups.vue'),
+        meta: { requiresAdmin: true, adminPermission: 'admin.backups.manage' }
+      },
+      {
+        path: 'team',
+        name: 'AdminTeamAccess',
+        component: () => import('../views/AdminTeamAccess.vue'),
+        meta: { requiresAdmin: true, adminPermission: 'admin.team.manage' }
       },
       {
         path: 'profile',
@@ -220,6 +293,7 @@ const router = createRouter({
 // Navigation guard
 router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
+  const accessStore = useAccessStore()
   
   // Check for admin routes
   if (to.meta.requiresAdmin) {
@@ -228,12 +302,24 @@ router.beforeEach(async (to, from, next) => {
       next({ name: 'AdminLogin', query: { redirect: to.fullPath } })
       return
     }
+    if (to.meta.adminPermission) {
+      try {
+        await accessStore.loadAdminContext()
+        if (!accessStore.hasAdminPermission(to.meta.adminPermission)) {
+          next({ name: 'AdminDashboard' })
+          return
+        }
+      } catch (error) {
+        next({ name: 'AdminLogin', query: { redirect: to.fullPath } })
+        return
+      }
+    }
     next()
     return
   }
   
   // If trying to access admin login but already authenticated
-  if (to.name === 'AdminLogin' && localStorage.getItem('adminToken')) {
+  if (to.name === 'AdminLogin' && localStorage.getItem('adminToken') && localStorage.getItem('adminUser')) {
     next({ name: 'AdminDashboard' })
     return
   }
@@ -255,6 +341,18 @@ router.beforeEach(async (to, from, next) => {
       next({ name: 'Home' })
     }
   } else {
+    if (to.meta.operatorPermission && authStore.user?.user_type === 'operator') {
+      try {
+        await accessStore.loadOperatorContext()
+        if (!accessStore.hasOperatorPermission(to.meta.operatorPermission)) {
+          next({ name: 'OperatorHome' })
+          return
+        }
+      } catch (error) {
+        next({ name: 'OperatorHome' })
+        return
+      }
+    }
     next()
   }
 })

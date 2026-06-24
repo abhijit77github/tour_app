@@ -1,21 +1,3 @@
-# Frontend ConfigMap with nginx config
-resource "kubernetes_config_map" "frontend_config" {
-  metadata {
-    name      = "${var.app_name}-frontend-config"
-    namespace = kubernetes_namespace.tour_app.metadata[0].name
-    labels    = local.app_labels
-  }
-
-  data = {
-    "nginx.conf" = templatefile("${path.module}/nginx.conf.tpl", {
-      backend_service = kubernetes_service.backend.metadata[0].name
-      backend_port    = 80
-    })
-  }
-
-  depends_on = [kubernetes_namespace.tour_app]
-}
-
 # Frontend Service
 resource "kubernetes_service" "frontend" {
   metadata {
@@ -85,11 +67,6 @@ resource "kubernetes_deployment" "frontend" {
             name           = "http"
           }
 
-          env {
-            name  = "VITE_API_URL"
-            value = "http://${kubernetes_service.backend.metadata[0].name}/api"
-          }
-
           resources {
             requests = {
               cpu    = var.frontend_cpu_request
@@ -123,19 +100,6 @@ resource "kubernetes_deployment" "frontend" {
             period_seconds        = 5
             timeout_seconds       = 3
             failure_threshold     = 2
-          }
-
-          volume_mount {
-            name       = "nginx-config"
-            mount_path = "/etc/nginx"
-            read_only  = true
-          }
-        }
-
-        volume {
-          name = "nginx-config"
-          config_map {
-            name = kubernetes_config_map.frontend_config.metadata[0].name
           }
         }
 

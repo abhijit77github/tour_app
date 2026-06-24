@@ -51,6 +51,25 @@ class UserCreate(UserBase):
     password: str
 
 
+class RegistrationOTPVerifyRequest(BaseModel):
+    email: str
+    otp: str
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_field(cls, value: str) -> str:
+        return validate_app_email(value)
+
+
+class ResendActivationOTPRequest(BaseModel):
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_field(cls, value: str) -> str:
+        return validate_app_email(value)
+
+
 class UserInDB(UserBase):
     id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
     hashed_password: str
@@ -118,6 +137,7 @@ class ResetPasswordRequest(BaseModel):
     """Reset password with OTP"""
     email: str
     otp: str
+    verification_token: str = Field(..., min_length=1, description="Short-lived token issued after OTP verification")
     new_password: str = Field(..., min_length=8, description="Must be at least 8 characters")
 
     @field_validator("email")

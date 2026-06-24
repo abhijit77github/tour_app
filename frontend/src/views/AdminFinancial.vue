@@ -1,2351 +1,1974 @@
 <template>
   <div class="admin-financial">
     <div class="page-header">
-      <h1>Financial Management</h1>
-      <p class="subtitle">Track payments, commissions, and payouts</p>
-    </div>
-
-    <div v-if="loading" class="status-message">Loading financial data...</div>
-    <div v-else-if="loadError" class="error-message">{{ loadError }}</div>
-
-    <!-- Tabs -->
-    <div class="tabs">
-      <button
-        @click="activeTab = 'dashboard'"
-        :class="['tab', { active: activeTab === 'dashboard' }]"
-      >
-        📊 Dashboard
-      </button>
-      <button
-        @click="activeTab = 'transactions'"
-        :class="['tab', { active: activeTab === 'transactions' }]"
-      >
-        💳 Transactions
-      </button>
-      <button
-        @click="activeTab = 'commissions'"
-        :class="['tab', { active: activeTab === 'commissions' }]"
-      >
-        📈 Commissions
-      </button>
-      <button
-        @click="activeTab = 'payouts'"
-        :class="['tab', { active: activeTab === 'payouts' }]"
-      >
-        💰 Payouts
-      </button>
-      <button
-        @click="activeTab = 'reports'"
-        :class="['tab', { active: activeTab === 'reports' }]"
-      >
-        📋 Reports
-      </button>
-      <button
-        @click="activeTab = 'export'"
-        :class="['tab', { active: activeTab === 'export' }]"
-      >
-        📥 Export
-      </button>
-    </div>
-
-    <!-- Dashboard Tab -->
-    <div v-if="activeTab === 'dashboard'" class="tab-content">
-      <div class="metrics-grid">
-        <!-- Total Revenue Card -->
-        <div class="metric-card">
-          <div class="metric-icon">💵</div>
-          <div class="metric-content">
-            <p class="metric-label">Total Revenue</p>
-            <p class="metric-value">{{ formatCurrency(financialData.totalRevenue) }}</p>
-            <p class="metric-subtitle">All-time earnings</p>
-          </div>
-        </div>
-
-        <!-- Monthly Revenue Card -->
-        <div class="metric-card">
-          <div class="metric-icon">📅</div>
-          <div class="metric-content">
-            <p class="metric-label">Monthly Revenue</p>
-            <p class="metric-value">{{ formatCurrency(financialData.monthlyRevenue) }}</p>
-            <p class="metric-subtitle">Current month</p>
-          </div>
-        </div>
-
-        <!-- Pending Payouts Card -->
-        <div class="metric-card">
-          <div class="metric-icon">⏳</div>
-          <div class="metric-content">
-            <p class="metric-label">Pending Payouts</p>
-            <p class="metric-value">{{ formatCurrency(financialData.pendingPayouts) }}</p>
-            <p class="metric-subtitle">{{ financialData.pendingPayoutCount }} operators</p>
-          </div>
-        </div>
-
-        <!-- Commission Collected Card -->
-        <div class="metric-card">
-          <div class="metric-icon">🎯</div>
-          <div class="metric-content">
-            <p class="metric-label">Commission Collected</p>
-            <p class="metric-value">{{ formatCurrency(financialData.commissionCollected) }}</p>
-            <p class="metric-subtitle">{{ financialData.commissionPercentage }}% avg</p>
-          </div>
-        </div>
-
-        <!-- Processing Fee Card -->
-        <div class="metric-card">
-          <div class="metric-icon">⚙️</div>
-          <div class="metric-content">
-            <p class="metric-label">Processing Fees</p>
-            <p class="metric-value">{{ formatCurrency(financialData.processingFees) }}</p>
-            <p class="metric-subtitle">Payment gateway fees</p>
-          </div>
-        </div>
-
-        <!-- Avg Transaction Card -->
-        <div class="metric-card">
-          <div class="metric-icon">📊</div>
-          <div class="metric-content">
-            <p class="metric-label">Avg Transaction</p>
-            <p class="metric-value">{{ formatCurrency(financialData.avgTransaction) }}</p>
-            <p class="metric-subtitle">Average value</p>
-          </div>
-        </div>
+      <div class="header-copy">
+        <span class="header-eyebrow">Revenue Operations</span>
+        <h1>Financial and Billing Controls</h1>
+        <p class="subtitle">Manage plan catalog, operator subscriptions, credit adjustments, and recent billing activity.</p>
       </div>
-
-      <!-- Charts Section -->
-      <div class="charts-section">
-        <div class="chart-container">
-          <h3>Revenue Trend (Last 12 Months)</h3>
-          <div class="chart-placeholder">
-            <p>📈 Revenue trend chart would display here</p>
-            <div class="chart-bars">
-              <div v-for="month in 12" :key="month" class="chart-bar" :style="{ height: (Math.random() * 80 + 20) + '%' }"></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="chart-container">
-          <h3>Payment Method Breakdown</h3>
-          <div class="chart-placeholder">
-            <p>🥧 Payment method distribution</p>
-            <div class="payment-breakdown">
-              <div class="payment-item">
-                <span class="payment-label">Card</span>
-                <div class="payment-bar" style="width: 45%"></div>
-                <span class="payment-value">45%</span>
-              </div>
-              <div class="payment-item">
-                <span class="payment-label">UPI</span>
-                <div class="payment-bar" style="width: 35%"></div>
-                <span class="payment-value">35%</span>
-              </div>
-              <div class="payment-item">
-                <span class="payment-label">Wallet</span>
-                <div class="payment-bar" style="width: 20%"></div>
-                <span class="payment-value">20%</span>
-              </div>
-            </div>
-          </div>
-        </div>
+      <div class="header-actions">
+        <div class="header-status">Live billing console</div>
+        <button class="btn-refresh" @click="loadAll" :disabled="loading">{{ loading ? 'Refreshing…' : 'Refresh' }}</button>
       </div>
     </div>
 
-    <!-- Transactions Tab -->
-    <div v-else-if="activeTab === 'transactions'" class="tab-content">
-      <div class="transaction-controls">
-        <input
-          v-model="transactionSearch"
-          type="text"
-          placeholder="Search by transaction ID, tourist, operator..."
-          class="search-input"
-        />
+    <div v-if="message.text" :class="['message-banner', message.type]">{{ message.text }}</div>
+    <div v-if="loading && !plans.length && !subscriptions.length" class="state-box">Loading billing controls…</div>
+    <div v-else-if="loadError" class="state-box error">{{ loadError }}</div>
 
-        <select v-model="transactionFilters.status" class="filter-select">
-          <option value="">All Status</option>
-          <option value="completed">✓ Completed</option>
-          <option value="pending">⏳ Pending</option>
-          <option value="failed">✗ Failed</option>
-        </select>
-
-        <select v-model="transactionFilters.method" class="filter-select">
-          <option value="">All Methods</option>
-          <option value="card">💳 Card</option>
-          <option value="upi">📱 UPI</option>
-          <option value="wallet">👛 Wallet</option>
-        </select>
-
-        <input
-          v-model.number="transactionFilters.minAmount"
-          type="number"
-          placeholder="Min amount"
-          class="filter-input"
-        />
-
-        <input
-          v-model.number="transactionFilters.maxAmount"
-          type="number"
-          placeholder="Max amount"
-          class="filter-input"
-        />
+    <section class="tab-shell">
+      <div class="tab-bar" role="tablist" aria-label="Financial sections">
+        <button :class="['tab-button', { active: activeTab === 'overview' }]" type="button" role="tab" :aria-selected="activeTab === 'overview'" @click="activeTab = 'overview'">
+          <span>Overview</span>
+          <small>{{ subscriptions.length }}</small>
+        </button>
+        <button :class="['tab-button', { active: activeTab === 'planner' }]" type="button" role="tab" :aria-selected="activeTab === 'planner'" @click="activeTab = 'planner'">
+          <span>Planner</span>
+          <small>{{ plannerBreakdown.length }}</small>
+        </button>
+        <button :class="['tab-button', { active: activeTab === 'catalog' }]" type="button" role="tab" :aria-selected="activeTab === 'catalog'" @click="activeTab = 'catalog'">
+          <span>Catalog</span>
+          <small>{{ plans.length }}</small>
+        </button>
+        <button :class="['tab-button', { active: activeTab === 'activity' }]" type="button" role="tab" :aria-selected="activeTab === 'activity'" @click="activeTab = 'activity'">
+          <span>Activity</span>
+          <small>{{ ledgerEntries.length + billingEvents.length }}</small>
+        </button>
       </div>
 
-      <div v-if="filteredTransactions.length === 0" class="empty-state">
-        <p>📭 No transactions found</p>
-      </div>
-
-      <div v-else class="transactions-container">
-        <div class="transactions-table">
-          <div class="table-header">
-            <div class="col col-date">Date</div>
-            <div class="col col-id">Transaction ID</div>
-            <div class="col col-tourist">Tourist</div>
-            <div class="col col-operator">Operator</div>
-            <div class="col col-amount">Amount</div>
-            <div class="col col-commission">Commission</div>
-            <div class="col col-method">Method</div>
-            <div class="col col-status">Status</div>
-            <div class="col col-actions">Actions</div>
-          </div>
-
-          <div
-            v-for="transaction in paginatedTransactions"
-            :key="transaction._id"
-            class="table-row"
-          >
-            <div class="col col-date">{{ formatDate(transaction.date) }}</div>
-            <div class="col col-id">{{ transaction.transaction_id }}</div>
-            <div class="col col-tourist">{{ transaction.tourist_name }}</div>
-            <div class="col col-operator">{{ transaction.operator_name }}</div>
-            <div class="col col-amount">{{ formatCurrency(transaction.amount) }}</div>
-            <div class="col col-commission">{{ formatCurrency(transaction.commission) }}</div>
-            <div class="col col-method">{{ getPaymentMethodIcon(transaction.method) }} {{ transaction.method }}</div>
-            <div class="col col-status">
-              <span :class="['status-badge', `status-${transaction.status}`]">
-                {{ getStatusLabel(transaction.status) }}
-              </span>
-            </div>
-            <div class="col col-actions">
-              <button @click="viewTransactionDetail(transaction)" class="action-btn view">👁️</button>
-              <button v-if="transaction.status !== 'failed'" @click="refundTransaction(transaction)" class="action-btn refund">↩️</button>
-              <button @click="markDisputed(transaction)" class="action-btn dispute">⚠️</button>
-            </div>
-          </div>
+      <div v-if="activeTab === 'overview'" class="tab-panel">
+        <div class="metrics-grid compact-metrics-grid">
+          <article class="metric-card">
+            <span class="metric-label">Plans</span>
+            <strong>{{ plans.length }}</strong>
+            <p>{{ plans.filter(plan => plan.is_active).length }} active</p>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Subscriptions</span>
+            <strong>{{ subscriptions.length }}</strong>
+            <p>{{ subscriptions.filter(item => item.plan_status === 'active').length }} active</p>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Pending activation</span>
+            <strong>{{ subscriptions.filter(item => item.plan_status === 'pending_activation').length }}</strong>
+            <p>Operator requests awaiting review</p>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Outstanding credits</span>
+            <strong>{{ totalRemainingCredits }}</strong>
+            <p>Across loaded subscriptions</p>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Billable events</span>
+            <strong>{{ billableEventCount }}</strong>
+            <p>Current billing event sample</p>
+          </article>
         </div>
 
-        <!-- Pagination -->
-        <div class="pagination">
-          <button
-            @click="transactionPage = Math.max(1, transactionPage - 1)"
-            :disabled="transactionPage === 1"
-            class="pagination-btn"
-          >
-            ← Previous
-          </button>
-
-          <div class="page-buttons">
-            <button
-              v-for="page in visibleTransactionPages"
-              :key="page"
-              @click="transactionPage = page"
-              :class="['page-btn', { active: transactionPage === page }]"
-            >
-              {{ page }}
-            </button>
-          </div>
-
-          <button
-            @click="transactionPage++"
-            :disabled="transactionPage >= totalTransactionPages"
-            class="pagination-btn"
-          >
-            Next →
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Commissions Tab -->
-    <div v-else-if="activeTab === 'commissions'" class="tab-content">
-      <div class="commissions-container">
-        <!-- Commission Rules Section -->
-        <div class="section">
-          <h3>Commission Rules</h3>
-          <div class="commission-rules">
-            <div class="rule-card">
-              <label>Default Commission %</label>
-              <div class="input-group">
-                <input v-model.number="commissionRules.default" type="number" class="input" />
-                <span class="unit">%</span>
+        <div class="grid two-col second-row">
+          <section class="panel">
+            <div class="panel-head with-meta">
+              <div>
+                <p class="panel-kicker">Subscriptions</p>
+                <h2>Operator plan state</h2>
               </div>
-            </div>
-
-            <div class="rule-card">
-              <label>Tier 1 (Premium)</label>
-              <div class="input-group">
-                <input v-model.number="commissionRules.tier1" type="number" class="input" />
-                <span class="unit">%</span>
-              </div>
-              <p class="rule-note">For high-rated operators</p>
-            </div>
-
-            <div class="rule-card">
-              <label>Tier 2 (Standard)</label>
-              <div class="input-group">
-                <input v-model.number="commissionRules.tier2" type="number" class="input" />
-                <span class="unit">%</span>
-              </div>
-              <p class="rule-note">For regular operators</p>
-            </div>
-
-            <div class="rule-card">
-              <label>Holiday Multiplier</label>
-              <div class="input-group">
-                <input v-model.number="commissionRules.holidayMultiplier" type="number" step="0.1" class="input" />
-                <span class="unit">x</span>
-              </div>
-              <p class="rule-note">1.2 = 20% increase</p>
-            </div>
-          </div>
-
-          <button @click="saveCommissionRules" class="btn btn-primary">💾 Save Rules</button>
-        </div>
-
-        <!-- Commission History Section -->
-        <div class="section">
-          <h3>Commission History by Operator</h3>
-
-          <div class="commission-search">
-            <input
-              v-model="commissionSearch"
-              type="text"
-              placeholder="Search operator name..."
-              class="search-input"
-            />
-          </div>
-
-          <div v-if="filteredCommissions.length === 0" class="empty-state">
-            <p>📭 No commission records</p>
-          </div>
-
-          <div v-else class="commissions-list">
-            <div
-              v-for="commission in filteredCommissions"
-              :key="commission._id"
-              class="commission-card"
-            >
-              <div class="commission-header">
-                <h4>{{ commission.operator_name }}</h4>
-                <span class="commission-total">{{ formatCurrency(commission.earned) }}</span>
-              </div>
-
-              <div class="commission-details">
-                <div class="detail-item">
-                  <span class="label">Period:</span>
-                  <span class="value">{{ commission.period }}</span>
-                </div>
-                <div class="detail-item">
-                  <span class="label">Earned:</span>
-                  <span class="value">{{ formatCurrency(commission.earned) }}</span>
-                </div>
-                <div class="detail-item">
-                  <span class="label">Adjustments:</span>
-                  <span class="value">{{ formatCurrency(commission.adjustments) }}</span>
-                </div>
-                <div class="detail-item">
-                  <span class="label">Net:</span>
-                  <span class="value">{{ formatCurrency(commission.net) }}</span>
+              <div class="panel-meta-row">
+                <span class="panel-meta">{{ pageRangeLabel(subscriptions, subscriptionsPage, PAGE_SIZE.subscriptions) }}</span>
+                <div class="pager">
+                  <button class="pager-btn" type="button" @click="shiftPage(subscriptionsPage, -1, subscriptions, PAGE_SIZE.subscriptions)" :disabled="subscriptionsPage <= 1">Prev</button>
+                  <span>{{ subscriptionsPage }} / {{ totalPagesFor(subscriptions, PAGE_SIZE.subscriptions) }}</span>
+                  <button class="pager-btn" type="button" @click="shiftPage(subscriptionsPage, 1, subscriptions, PAGE_SIZE.subscriptions)" :disabled="subscriptionsPage >= totalPagesFor(subscriptions, PAGE_SIZE.subscriptions)">Next</button>
                 </div>
               </div>
-
-              <p class="commission-note">Status: {{ commission.status }}</p>
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
 
-    <!-- Payouts Tab -->
-    <div v-else-if="activeTab === 'payouts'" class="tab-content">
-      <div class="payouts-container">
-        <!-- Pending Payouts Section -->
-        <div class="section">
-          <h3>Pending Payouts ({{ pendingPayouts.length }} operators)</h3>
-
-          <div class="payout-controls">
-            <button @click="initiatePayoutAll" class="btn btn-primary">💸 Payout All</button>
-            <input
-              v-model.number="payoutThreshold"
-              type="number"
-              placeholder="Minimum payout amount"
-              class="filter-input"
-            />
-            <button @click="saveBulkPayoutSettings" class="btn btn-secondary">Save Settings</button>
-          </div>
-
-          <div v-if="pendingPayouts.length === 0" class="empty-state">
-            <p>✓ No pending payouts</p>
-          </div>
-
-          <div v-else class="payouts-grid">
-            <div
-              v-for="payout in pendingPayouts"
-              :key="payout._id"
-              class="payout-card"
-            >
-              <div class="payout-header">
-                <h4>{{ payout.operator_name }}</h4>
-                <span class="payout-amount">{{ formatCurrency(payout.amount) }}</span>
-              </div>
-
-              <div class="payout-details">
-                <p><span class="label">Days Pending:</span> {{ payout.daysPending }}</p>
-                <p><span class="label">Bank:</span> {{ payout.bankName }}</p>
-                <p><span class="label">Account:</span> ****{{ payout.accountLast4 }}</p>
-              </div>
-
-              <div class="payout-actions">
-                <button @click="initiatePayout(payout)" class="btn btn-small btn-primary">
-                  💰 Initiate
-                </button>
-                <button @click="schedulePayout(payout)" class="btn btn-small btn-secondary">
-                  🕐 Schedule
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Payout History Section -->
-        <div class="section">
-          <h3>Payout History</h3>
-
-          <div class="payout-history-controls">
-            <select v-model="payoutHistoryFilter.status" class="filter-select">
-              <option value="">All Status</option>
-              <option value="completed">✓ Completed</option>
-              <option value="processing">⏳ Processing</option>
-              <option value="failed">✗ Failed</option>
-            </select>
-          </div>
-
-          <div v-if="filteredPayoutHistory.length === 0" class="empty-state">
-            <p>📭 No payout history</p>
-          </div>
-
-          <div v-else class="payout-history-list">
-            <div
-              v-for="history in filteredPayoutHistory"
-              :key="history._id"
-              class="history-item"
-            >
-              <div class="history-content">
-                <div class="history-main">
-                  <h4>{{ history.operator_name }}</h4>
-                  <span class="history-date">{{ formatDate(history.date) }}</span>
+            <div v-if="!subscriptions.length" class="state-box">No subscriptions found.</div>
+            <div v-else class="list-wrap scroll-list compact-scroll">
+              <article v-for="subscription in paginatedItems(subscriptions, subscriptionsPage, PAGE_SIZE.subscriptions)" :key="subscription._id" class="subscription-row compact-row">
+                <div>
+                  <h3>{{ subscription.operator_profile?.business_name || subscription.operator_profile_id }}</h3>
+                  <p>{{ subscription.plan_code }} · {{ readableText(subscription.plan_status) }}</p>
+                  <div class="tag-row">
+                    <span class="tag">Remaining {{ subscription.credits_remaining }}</span>
+                    <span class="tag">Included {{ subscription.included_credits }}</span>
+                    <span v-if="subscription.requested_plan_code" class="tag request">Requested {{ subscription.requested_plan_code }}</span>
+                  </div>
                 </div>
-                <div class="history-details">
-                  <span class="amount">{{ formatCurrency(history.amount) }}</span>
-                  <span :class="['status', `status-${history.status}`]">{{ getStatusLabel(history.status) }}</span>
+                <span :class="['status-pill', subscription.plan_status]">{{ readableText(subscription.plan_status) }}</span>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head with-meta">
+              <div>
+                <p class="panel-kicker">Recent events</p>
+                <h2>Billable billing activity</h2>
+              </div>
+              <div class="panel-meta-row">
+                <span class="panel-meta">{{ pageRangeLabel(billingEvents, billingEventsPage, PAGE_SIZE.events) }}</span>
+                <div class="pager">
+                  <button class="pager-btn" type="button" @click="shiftPage(billingEventsPage, -1, billingEvents, PAGE_SIZE.events)" :disabled="billingEventsPage <= 1">Prev</button>
+                  <span>{{ billingEventsPage }} / {{ totalPagesFor(billingEvents, PAGE_SIZE.events) }}</span>
+                  <button class="pager-btn" type="button" @click="shiftPage(billingEventsPage, 1, billingEvents, PAGE_SIZE.events)" :disabled="billingEventsPage >= totalPagesFor(billingEvents, PAGE_SIZE.events)">Next</button>
                 </div>
               </div>
-
-              <p class="reference">Ref: {{ history.reference_id }}</p>
             </div>
-          </div>
+
+            <div class="events-table-wrap compact-scroll">
+              <table class="events-table compact-table">
+                <thead>
+                  <tr>
+                    <th>Operator</th>
+                    <th>Surface</th>
+                    <th>Credits</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="event in paginatedItems(billingEvents, billingEventsPage, PAGE_SIZE.events)" :key="event._id">
+                    <td>{{ operatorNameForEvent(event.operator_profile_id) }}</td>
+                    <td>{{ event.source_surface }}</td>
+                    <td>{{ event.credits_charged }}</td>
+                    <td>₹{{ formatMoney(event.currency_amount || 0) }}</td>
+                    <td>{{ event.is_billable ? 'Billable' : event.outcome_reason || 'Rejected' }}</td>
+                  </tr>
+                  <tr v-if="!billingEvents.length">
+                    <td colspan="5" class="empty-inline">No billing events available.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
       </div>
-    </div>
 
-    <!-- Reports Tab -->
-    <div v-else-if="activeTab === 'reports'" class="tab-content">
-      <div class="reports-container">
-        <h3>Financial Reports</h3>
-
-        <div class="report-grid">
-          <div class="report-card">
-            <div class="report-icon">📊</div>
-            <h4>Revenue by Period</h4>
-            <p>Monthly and yearly revenue breakdown</p>
-            <button @click="generateReport('revenue')" class="btn btn-secondary">Generate</button>
-          </div>
-
-          <div class="report-card">
-            <div class="report-icon">🎯</div>
-            <h4>Commission Breakdown</h4>
-            <p>Commission collected vs platform revenue</p>
-            <button @click="generateReport('commission')" class="btn btn-secondary">Generate</button>
-          </div>
-
-          <div class="report-card">
-            <div class="report-icon">🚀</div>
-            <h4>Operator Earnings</h4>
-            <p>Top earners and payment distribution</p>
-            <button @click="generateReport('operators')" class="btn btn-secondary">Generate</button>
-          </div>
-
-          <div class="report-card">
-            <div class="report-icon">💳</div>
-            <h4>Payment Methods</h4>
-            <p>Analysis of payment methods used</p>
-            <button @click="generateReport('methods')" class="btn btn-secondary">Generate</button>
-          </div>
-
-          <div class="report-card">
-            <div class="report-icon">📈</div>
-            <h4>Growth Metrics</h4>
-            <p>Platform growth and trends</p>
-            <button @click="generateReport('growth')" class="btn btn-secondary">Generate</button>
-          </div>
-
-          <div class="report-card">
-            <div class="report-icon">💰</div>
-            <h4>Customer Acquisition</h4>
-            <p>Cost per acquisition analysis</p>
-            <button @click="generateReport('cac')" class="btn btn-secondary">Generate</button>
-          </div>
-        </div>
-
-        <div class="generated-reports">
-          <h4>Generated Reports</h4>
-          <div v-if="generatedReports.length === 0" class="empty-state">
-            <p>📭 No reports generated yet</p>
-          </div>
-
-          <div v-else class="reports-list">
-            <div v-for="report in generatedReports" :key="report._id" class="report-item">
-              <div class="report-info">
-                <p class="report-name">{{ report.name }}</p>
-                <p class="report-date">Generated: {{ formatDate(report.generated_at) }}</p>
-              </div>
-              <div class="report-actions">
-                <button @click="downloadReport(report)" class="btn btn-small">📥 Download</button>
-                <button @click="deleteReport(report)" class="btn btn-small btn-danger">🗑️</button>
+      <div v-else-if="activeTab === 'planner'" class="tab-panel">
+        <div class="grid two-col planner-row">
+          <section class="panel planner-hub-panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">Planner funnel</p>
+                <h2>Tracked planner events over {{ billingSummary.days || 30 }} days</h2>
               </div>
             </div>
-          </div>
+
+            <div class="planner-metrics-grid compact-metrics-grid">
+              <article class="metric-card compact">
+                <span class="metric-label">Recommendations served</span>
+                <strong>{{ plannerFunnel.recommendations_served }}</strong>
+                <p>Distinct planner sessions with recommendations</p>
+              </article>
+              <article class="metric-card compact">
+                <span class="metric-label">Quote intents</span>
+                <strong>{{ plannerFunnel.quote_intents }}</strong>
+                <p>Planner add-to-cart and quote-intent actions</p>
+              </article>
+              <article class="metric-card compact">
+                <span class="metric-label">Itinerary saves</span>
+                <strong>{{ plannerFunnel.itinerary_saves }}</strong>
+                <p>Template-based itinerary conversions</p>
+              </article>
+              <article class="metric-card compact">
+                <span class="metric-label">Planner credits</span>
+                <strong>{{ plannerTotals.credits_consumed }}</strong>
+                <p>Credits consumed by planner events</p>
+              </article>
+            </div>
+
+            <div class="planner-pricing-strip">
+              <span class="tag">Search click {{ plannerPricing.search_profile_click }}</span>
+              <span class="tag">Planner intent {{ plannerPricing.planner_intent_click }}</span>
+              <span class="tag">Template save {{ plannerPricing.conversion }}</span>
+            </div>
+
+            <div v-if="plannerPricingWarning" class="state-box warning planner-warning-box">{{ plannerPricingWarning }}</div>
+
+            <div class="planner-admin-grid">
+              <form class="planner-pricing-form surface-card" @submit.prevent="savePlannerPricing">
+                <div class="planner-pricing-head">
+                  <div>
+                    <p class="panel-kicker">Billing pricing controls</p>
+                    <h3>Set credit values for billable events</h3>
+                    <p class="planner-pricing-note">Use whole numbers from 0 to 100. Zero keeps tracking active while disabling charges.</p>
+                  </div>
+                  <div class="planner-pricing-actions">
+                    <button class="btn-secondary" type="button" @click="resetPlannerPricing" :disabled="savingPlannerPricing">Reset</button>
+                    <button class="btn-primary" type="submit" :disabled="savingPlannerPricing">{{ savingPlannerPricing ? 'Saving…' : 'Save pricing' }}</button>
+                  </div>
+                </div>
+
+                <div class="planner-pricing-grid">
+                  <label class="field">
+                    <span>Search profile click</span>
+                    <input v-model.number="plannerPricingForm.search_profile_click" type="number" min="0" max="100" step="1" required />
+                  </label>
+                  <label class="field">
+                    <span>Planner quote intent</span>
+                    <input v-model.number="plannerPricingForm.planner_intent_click" type="number" min="0" max="100" step="1" required />
+                  </label>
+                  <label class="field">
+                    <span>Template itinerary save</span>
+                    <input v-model.number="plannerPricingForm.conversion" type="number" min="0" max="100" step="1" required />
+                  </label>
+                </div>
+
+                <p class="planner-pricing-meta">
+                  Source: {{ billingSummary?.planner?.pricing_source || plannerPricingSettings.source || 'environment' }}
+                  <span v-if="plannerPricingSettings.updated_at"> · Updated {{ formatDateTime(plannerPricingSettings.updated_at) }}</span>
+                </p>
+              </form>
+
+              <div class="planner-admin-column">
+                <div class="planner-pricing-strip quota-strip">
+                  <span class="tag">Daily limit {{ plannerQuota.daily_limit }}</span>
+                  <span class="tag">Monthly limit {{ plannerQuota.monthly_limit }}</span>
+                  <span class="tag">Ad bonus +{{ plannerQuota.ad_reward_daily_credits }}/+{{ plannerQuota.ad_reward_monthly_credits }}</span>
+                  <span class="tag">Promotion bonus +{{ plannerQuota.promotion_reward_daily_credits }}/+{{ plannerQuota.promotion_reward_monthly_credits }}</span>
+                </div>
+
+                <div v-if="plannerQuotaValidation" class="state-box warning planner-warning-box">{{ plannerQuotaValidation }}</div>
+
+                <form class="planner-pricing-form surface-card" @submit.prevent="savePlannerQuota">
+                  <div class="planner-pricing-head">
+                    <div>
+                      <p class="panel-kicker">Tourist planner quota</p>
+                      <h3>Set daily and monthly planner request limits</h3>
+                      <p class="planner-pricing-note">These limits apply before Bedrock is called. Reward grants remain server-verified.</p>
+                    </div>
+                    <div class="planner-pricing-actions">
+                      <button class="btn-secondary" type="button" @click="resetPlannerQuota" :disabled="savingPlannerQuota">Reset</button>
+                      <button class="btn-primary" type="submit" :disabled="savingPlannerQuota || !!plannerQuotaValidation">{{ savingPlannerQuota ? 'Saving…' : 'Save quota' }}</button>
+                    </div>
+                  </div>
+
+                  <div class="planner-pricing-grid quota-grid">
+                    <label class="field">
+                      <span>Daily requests</span>
+                      <input v-model.number="plannerQuotaForm.daily_limit" type="number" min="0" max="100" step="1" required />
+                    </label>
+                    <label class="field">
+                      <span>Monthly requests</span>
+                      <input v-model.number="plannerQuotaForm.monthly_limit" type="number" min="0" max="1000" step="1" required />
+                    </label>
+                    <label class="field">
+                      <span>Ad daily bonus</span>
+                      <input v-model.number="plannerQuotaForm.ad_reward_daily_credits" type="number" min="0" max="20" step="1" required />
+                    </label>
+                    <label class="field">
+                      <span>Ad monthly bonus</span>
+                      <input v-model.number="plannerQuotaForm.ad_reward_monthly_credits" type="number" min="0" max="100" step="1" required />
+                    </label>
+                    <label class="field">
+                      <span>Promotion daily bonus</span>
+                      <input v-model.number="plannerQuotaForm.promotion_reward_daily_credits" type="number" min="0" max="20" step="1" required />
+                    </label>
+                    <label class="field">
+                      <span>Promotion monthly bonus</span>
+                      <input v-model.number="plannerQuotaForm.promotion_reward_monthly_credits" type="number" min="0" max="100" step="1" required />
+                    </label>
+                  </div>
+
+                  <p class="planner-pricing-meta">
+                    Source: {{ billingSummary?.planner?.quota_source || plannerQuotaSettings.source || 'environment' }}
+                    <span v-if="plannerQuotaSettings.updated_at"> · Updated {{ formatDateTime(plannerQuotaSettings.updated_at) }}</span>
+                  </p>
+                </form>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel planner-breakdown-panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">Planner breakdown</p>
+                <h2>Planner event mix</h2>
+              </div>
+            </div>
+
+            <div v-if="!plannerBreakdown.length" class="state-box compact">No planner events recorded yet.</div>
+            <div v-else class="events-table-wrap planner-breakdown-wrap compact-scroll">
+              <table class="events-table compact-table planner-breakdown-table">
+                <thead>
+                  <tr>
+                    <th>Event type</th>
+                    <th>Total</th>
+                    <th>Billable</th>
+                    <th>Non-billable</th>
+                    <th>Credits</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in plannerBreakdown" :key="item.event_type">
+                    <td>{{ readableText(item.event_type) }}</td>
+                    <td>{{ item.events }}</td>
+                    <td>{{ item.billable_events }}</td>
+                    <td>{{ item.non_billable_events }}</td>
+                    <td>{{ item.credits_consumed }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div class="grid two-col second-row">
+          <section class="panel">
+            <div class="panel-head with-meta">
+              <div>
+                <p class="panel-kicker">Tourist planner quota ledger</p>
+                <h2>Quota consumption and grants</h2>
+              </div>
+              <div class="panel-meta-row">
+                <span class="panel-meta">{{ pageRangeLabel(touristQuotaLedger, quotaLedgerPage, PAGE_SIZE.quotaLedger) }}</span>
+                <div class="pager">
+                  <button class="pager-btn" type="button" @click="shiftPage(quotaLedgerPage, -1, touristQuotaLedger, PAGE_SIZE.quotaLedger)" :disabled="quotaLedgerPage <= 1">Prev</button>
+                  <span>{{ quotaLedgerPage }} / {{ totalPagesFor(touristQuotaLedger, PAGE_SIZE.quotaLedger) }}</span>
+                  <button class="pager-btn" type="button" @click="shiftPage(quotaLedgerPage, 1, touristQuotaLedger, PAGE_SIZE.quotaLedger)" :disabled="quotaLedgerPage >= totalPagesFor(touristQuotaLedger, PAGE_SIZE.quotaLedger)">Next</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="events-table-wrap quota-ops-table-wrap compact-scroll">
+              <table class="events-table compact-table">
+                <thead>
+                  <tr>
+                    <th>Tourist</th>
+                    <th>Event</th>
+                    <th>Source</th>
+                    <th>Daily</th>
+                    <th>Monthly</th>
+                    <th>Recorded</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="entry in paginatedItems(touristQuotaLedger, quotaLedgerPage, PAGE_SIZE.quotaLedger)" :key="entry._id">
+                    <td>{{ touristLabel(entry) }}</td>
+                    <td>{{ readableText(entry.event_type) }}</td>
+                    <td>{{ readableText(entry.source) }}</td>
+                    <td>{{ signedCredits(entry.credits_delta_daily) }}</td>
+                    <td>{{ signedCredits(entry.credits_delta_monthly) }}</td>
+                    <td>{{ formatDateTime(entry.created_at) }}</td>
+                  </tr>
+                  <tr v-if="!touristQuotaLedger.length">
+                    <td colspan="6" class="empty-inline">No tourist planner quota ledger entries yet.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head with-meta">
+              <div>
+                <p class="panel-kicker">Reward verification records</p>
+                <h2>Server-side reward verification state</h2>
+              </div>
+              <div class="panel-meta-row">
+                <span class="panel-meta">{{ pageRangeLabel(plannerRewardVerifications, rewardVerificationPage, PAGE_SIZE.rewards) }}</span>
+                <div class="pager">
+                  <button class="pager-btn" type="button" @click="shiftPage(rewardVerificationPage, -1, plannerRewardVerifications, PAGE_SIZE.rewards)" :disabled="rewardVerificationPage <= 1">Prev</button>
+                  <span>{{ rewardVerificationPage }} / {{ totalPagesFor(plannerRewardVerifications, PAGE_SIZE.rewards) }}</span>
+                  <button class="pager-btn" type="button" @click="shiftPage(rewardVerificationPage, 1, plannerRewardVerifications, PAGE_SIZE.rewards)" :disabled="rewardVerificationPage >= totalPagesFor(plannerRewardVerifications, PAGE_SIZE.rewards)">Next</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="events-table-wrap quota-ops-table-wrap compact-scroll">
+              <table class="events-table compact-table">
+                <thead>
+                  <tr>
+                    <th>Tourist</th>
+                    <th>Reward</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Consumed</th>
+                    <th>Recorded</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="record in paginatedItems(plannerRewardVerifications, rewardVerificationPage, PAGE_SIZE.rewards)" :key="record._id">
+                    <td>{{ touristLabel(record) }}</td>
+                    <td>{{ record.reward_id || 'N/A' }}</td>
+                    <td>{{ readableText(record.reward_type) }}</td>
+                    <td>{{ readableText(record.status || 'pending') }}</td>
+                    <td>{{ record.consumed_at ? formatDateTime(record.consumed_at) : 'Not consumed' }}</td>
+                    <td>{{ formatDateTime(record.created_at) }}</td>
+                  </tr>
+                  <tr v-if="!plannerRewardVerifications.length">
+                    <td colspan="6" class="empty-inline">No reward verification records yet.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
       </div>
-    </div>
 
-    <!-- Export Tab -->
-    <div v-else-if="activeTab === 'export'" class="tab-content">
-      <div class="export-container">
-        <div class="export-section">
-          <h3>Export Financial Data</h3>
-
-          <div class="export-options">
-            <div class="option-card">
-              <h4>Export Format</h4>
-              <div class="format-buttons">
-                <button
-                  @click="exportFormat = 'csv'"
-                  :class="['format-btn', { active: exportFormat === 'csv' }]"
-                >
-                  📄 CSV
-                </button>
-                <button
-                  @click="exportFormat = 'excel'"
-                  :class="['format-btn', { active: exportFormat === 'excel' }]"
-                >
-                  📊 Excel
-                </button>
-                <button
-                  @click="exportFormat = 'pdf'"
-                  :class="['format-btn', { active: exportFormat === 'pdf' }]"
-                >
-                  📋 PDF
-                </button>
-                <button
-                  @click="exportFormat = 'json'"
-                  :class="['format-btn', { active: exportFormat === 'json' }]"
-                >
-                  🔗 JSON
-                </button>
+      <div v-else-if="activeTab === 'catalog'" class="tab-panel">
+        <div class="grid two-col">
+          <section class="panel plan-catalog-panel">
+            <div class="panel-head with-meta">
+              <div>
+                <p class="panel-kicker">Plan catalog</p>
+                <h2>Edit billing plans</h2>
+              </div>
+              <div class="panel-meta-row">
+                <span class="panel-meta">{{ pageRangeLabel(plans, plansPage, PAGE_SIZE.plans) }}</span>
+                <div class="pager">
+                  <button class="pager-btn" type="button" @click="shiftPage(plansPage, -1, plans, PAGE_SIZE.plans)" :disabled="plansPage <= 1">Prev</button>
+                  <span>{{ plansPage }} / {{ totalPagesFor(plans, PAGE_SIZE.plans) }}</span>
+                  <button class="pager-btn" type="button" @click="shiftPage(plansPage, 1, plans, PAGE_SIZE.plans)" :disabled="plansPage >= totalPagesFor(plans, PAGE_SIZE.plans)">Next</button>
+                </div>
               </div>
             </div>
 
-            <div class="option-card">
-              <h4>Data to Export</h4>
-              <div class="checkbox-group">
-                <label>
-                  <input v-model="exportData.transactions" type="checkbox" />
-                  <span>Transactions</span>
-                </label>
-                <label>
-                  <input v-model="exportData.commissions" type="checkbox" />
-                  <span>Commissions</span>
-                </label>
-                <label>
-                  <input v-model="exportData.payouts" type="checkbox" />
-                  <span>Payouts</span>
-                </label>
-                <label>
-                  <input v-model="exportData.summaries" type="checkbox" />
-                  <span>Financial Summary</span>
-                </label>
+            <div class="plan-list scroll-list compact-scroll">
+              <article v-for="plan in paginatedItems(plans, plansPage, PAGE_SIZE.plans)" :key="plan._id" class="plan-card">
+                <div class="plan-top">
+                  <div>
+                    <h3>{{ plan.code }} · {{ plan.name }}</h3>
+                    <p>{{ plan.description }}</p>
+                  </div>
+                  <span :class="['status-pill', plan.is_active ? 'active' : 'inactive']">{{ plan.is_active ? 'Active' : 'Inactive' }}</span>
+                </div>
+
+                <div class="plan-edit-grid" v-if="planDrafts[plan._id]">
+                  <label class="field">
+                    <span>Monthly price</span>
+                    <input v-model.number="planDrafts[plan._id].monthly_price" type="number" min="0" step="1" />
+                  </label>
+                  <label class="field">
+                    <span>Included credits</span>
+                    <input v-model.number="planDrafts[plan._id].included_credits" type="number" min="0" step="1" />
+                  </label>
+                  <label class="field toggle">
+                    <input v-model="planDrafts[plan._id].is_active" type="checkbox" />
+                    <span>Plan is active</span>
+                  </label>
+                </div>
+
+                <div class="feature-tags">
+                  <span v-for="feature in plan.features || []" :key="feature" class="feature-tag">{{ feature }}</span>
+                </div>
+
+                <div class="row-actions">
+                  <button class="btn-primary" @click="savePlan(plan)" :disabled="savingPlanId === plan._id">
+                    {{ savingPlanId === plan._id ? 'Saving…' : 'Save plan' }}
+                  </button>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel action-panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">Manual controls</p>
+                <h2>Assign plans and adjust credits</h2>
               </div>
             </div>
 
-            <div class="option-card">
-              <h4>Date Range</h4>
-              <div class="date-inputs">
-                <input v-model="exportDateRange.from" type="date" class="input" />
-                <span>to</span>
-                <input v-model="exportDateRange.to" type="date" class="input" />
+            <div class="control-grid">
+              <div class="control-card">
+                <div class="control-card-head">
+                  <p class="panel-kicker">Plan activation</p>
+                  <h3>Assign or activate a provider plan</h3>
+                </div>
+
+                <form class="control-form" @submit.prevent="assignPlan">
+                  <label class="field">
+                    <span>Operator</span>
+                    <select v-model="assignmentForm.operator_profile_id" required>
+                      <option value="">Select operator</option>
+                      <option v-for="operator in operatorOptions" :key="operator.operator_profile_id" :value="operator.operator_profile_id">
+                        {{ operator.business_name || operator.operator_profile_id }}
+                      </option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Plan</span>
+                    <select v-model="assignmentForm.plan_code" required>
+                      <option value="">Select plan</option>
+                      <option v-for="plan in plans.filter(item => item.is_active)" :key="plan.code" :value="plan.code">{{ plan.name }}</option>
+                    </select>
+                  </label>
+                  <label class="field toggle">
+                    <input v-model="assignmentForm.reset_credits" type="checkbox" />
+                    <span>Reset to included credits</span>
+                  </label>
+                  <label class="field">
+                    <span>Notes</span>
+                    <input v-model="assignmentForm.notes" type="text" placeholder="Manual activation after review" required />
+                  </label>
+                  <button class="btn-primary" type="submit" :disabled="assigningPlan">{{ assigningPlan ? 'Assigning…' : 'Assign plan' }}</button>
+                </form>
+              </div>
+
+              <div class="control-card">
+                <div class="control-card-head">
+                  <p class="panel-kicker">Balance adjustment</p>
+                  <h3>Apply a manual credit correction</h3>
+                </div>
+
+                <form class="control-form standalone" @submit.prevent="submitAdjustment">
+                  <label class="field">
+                    <span>Operator</span>
+                    <select v-model="adjustmentForm.operator_profile_id" required>
+                      <option value="">Select operator</option>
+                      <option v-for="operator in operatorOptions" :key="`${operator.operator_profile_id}-adjustment`" :value="operator.operator_profile_id">
+                        {{ operator.business_name || operator.operator_profile_id }}
+                      </option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Credit delta</span>
+                    <input v-model.number="adjustmentForm.credits_delta" type="number" step="1" required />
+                  </label>
+                  <label class="field">
+                    <span>Notes</span>
+                    <input v-model="adjustmentForm.notes" type="text" placeholder="Fraud refund or manual grant" required />
+                  </label>
+                  <button class="btn-primary" type="submit" :disabled="adjustingCredits">{{ adjustingCredits ? 'Applying…' : 'Apply adjustment' }}</button>
+                </form>
               </div>
             </div>
-
-            <div class="option-card">
-              <h4>Additional Options</h4>
-              <div class="checkbox-group">
-                <label>
-                  <input v-model="exportOptions.includeCharts" type="checkbox" />
-                  <span>Include charts (PDF only)</span>
-                </label>
-                <label>
-                  <input v-model="exportOptions.compress" type="checkbox" />
-                  <span>Compress file</span>
-                </label>
-                <label>
-                  <input v-model="exportOptions.sendEmail" type="checkbox" />
-                  <span>Send to email</span>
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <div class="export-email" v-if="exportOptions.sendEmail">
-            <input v-model="exportEmail" type="email" placeholder="Email address" class="input" />
-          </div>
-
-          <div class="export-actions">
-            <button @click="resetExportForm" class="btn btn-secondary">Clear</button>
-            <button @click="exportFinancialData" class="btn btn-primary">📥 Export Now</button>
-          </div>
-
-          <div v-if="exportSuccess" class="success-message">{{ exportSuccess }}</div>
-          <div v-if="exportError" class="error-message">{{ exportError }}</div>
-        </div>
-
-        <div class="export-schedule">
-          <h3>Scheduled Exports</h3>
-
-          <div v-if="scheduledExports.length === 0" class="empty-state">
-            <p>📭 No scheduled exports</p>
-          </div>
-
-          <div v-else class="scheduled-list">
-            <div v-for="scheduled in scheduledExports" :key="scheduled._id" class="scheduled-item">
-              <div class="scheduled-info">
-                <p class="scheduled-name">{{ scheduled.frequency }} - {{ scheduled.format }}</p>
-                <p class="scheduled-recipients">📧 {{ scheduled.recipients.join(', ') }}</p>
-                <p class="scheduled-next">Next: {{ formatDate(scheduled.next_run) }}</p>
-              </div>
-              <button @click="deleteScheduledExport(scheduled)" class="btn btn-small btn-danger">🗑️</button>
-            </div>
-          </div>
-
-          <button @click="showScheduleModal = true" class="btn btn-primary">➕ Schedule Export</button>
+          </section>
         </div>
       </div>
-    </div>
 
-    <!-- Transaction Detail Modal -->
-    <div v-if="showTransactionModal" class="modal-overlay" @click.self="closeTransactionModal">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2>Transaction Details</h2>
-          <button @click="closeTransactionModal" class="close-btn">✕</button>
+      <div v-else class="tab-panel">
+        <div class="grid two-col second-row">
+          <section class="panel">
+            <div class="panel-head with-meta">
+              <div>
+                <p class="panel-kicker">Billing pricing audit</p>
+                <h2>Recent pricing changes</h2>
+              </div>
+              <div class="panel-meta-row">
+                <span class="panel-meta">{{ pageRangeLabel(plannerPricingHistory, pricingHistoryPage, PAGE_SIZE.history) }}</span>
+                <div class="pager">
+                  <button class="pager-btn" type="button" @click="shiftPage(pricingHistoryPage, -1, plannerPricingHistory, PAGE_SIZE.history)" :disabled="pricingHistoryPage <= 1">Prev</button>
+                  <span>{{ pricingHistoryPage }} / {{ totalPagesFor(plannerPricingHistory, PAGE_SIZE.history) }}</span>
+                  <button class="pager-btn" type="button" @click="shiftPage(pricingHistoryPage, 1, plannerPricingHistory, PAGE_SIZE.history)" :disabled="pricingHistoryPage >= totalPagesFor(plannerPricingHistory, PAGE_SIZE.history)">Next</button>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="!plannerPricingHistory.length" class="state-box compact">No billing pricing changes recorded yet.</div>
+            <div v-else class="planner-history-list scroll-list compact-scroll">
+              <article v-for="entry in paginatedItems(plannerPricingHistory, pricingHistoryPage, PAGE_SIZE.history)" :key="entry._id" class="planner-history-row compact-row">
+                <div>
+                  <strong>{{ formatDateTime(entry.changed_at) }}</strong>
+                  <p>Updated by {{ entry.changed_by || 'system' }}</p>
+                </div>
+                <div class="planner-history-values">
+                  <span class="tag muted">Was {{ formatPricingTriple(entry.previous_value) }}</span>
+                  <span class="tag">Now {{ formatPricingTriple(entry.new_value) }}</span>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head with-meta">
+              <div>
+                <p class="panel-kicker">Planner quota audit</p>
+                <h2>Recent quota changes</h2>
+              </div>
+              <div class="panel-meta-row">
+                <span class="panel-meta">{{ pageRangeLabel(plannerQuotaHistory, quotaHistoryPage, PAGE_SIZE.history) }}</span>
+                <div class="pager">
+                  <button class="pager-btn" type="button" @click="shiftPage(quotaHistoryPage, -1, plannerQuotaHistory, PAGE_SIZE.history)" :disabled="quotaHistoryPage <= 1">Prev</button>
+                  <span>{{ quotaHistoryPage }} / {{ totalPagesFor(plannerQuotaHistory, PAGE_SIZE.history) }}</span>
+                  <button class="pager-btn" type="button" @click="shiftPage(quotaHistoryPage, 1, plannerQuotaHistory, PAGE_SIZE.history)" :disabled="quotaHistoryPage >= totalPagesFor(plannerQuotaHistory, PAGE_SIZE.history)">Next</button>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="!plannerQuotaHistory.length" class="state-box compact">No planner quota changes recorded yet.</div>
+            <div v-else class="planner-history-list scroll-list compact-scroll">
+              <article v-for="entry in paginatedItems(plannerQuotaHistory, quotaHistoryPage, PAGE_SIZE.history)" :key="entry._id" class="planner-history-row compact-row">
+                <div>
+                  <strong>{{ formatDateTime(entry.changed_at) }}</strong>
+                  <p>Updated by {{ entry.changed_by || 'system' }}</p>
+                </div>
+                <div class="planner-history-values">
+                  <span class="tag muted">Was {{ formatQuotaSummary(entry.previous_value) }}</span>
+                  <span class="tag">Now {{ formatQuotaSummary(entry.new_value) }}</span>
+                </div>
+              </article>
+            </div>
+          </section>
         </div>
 
-        <div v-if="selectedTransaction" class="modal-body">
-          <div class="detail-grid">
-            <div class="detail-item">
-              <span class="label">Transaction ID:</span>
-              <span class="value">{{ selectedTransaction.transaction_id }}</span>
+        <div class="grid two-col second-row">
+          <section class="panel">
+            <div class="panel-head with-meta">
+              <div>
+                <p class="panel-kicker">Ledger</p>
+                <h2>Recent credit activity</h2>
+              </div>
+              <div class="panel-meta-row">
+                <span class="panel-meta">{{ pageRangeLabel(ledgerEntries, ledgerPage, PAGE_SIZE.ledger) }}</span>
+                <div class="pager">
+                  <button class="pager-btn" type="button" @click="shiftPage(ledgerPage, -1, ledgerEntries, PAGE_SIZE.ledger)" :disabled="ledgerPage <= 1">Prev</button>
+                  <span>{{ ledgerPage }} / {{ totalPagesFor(ledgerEntries, PAGE_SIZE.ledger) }}</span>
+                  <button class="pager-btn" type="button" @click="shiftPage(ledgerPage, 1, ledgerEntries, PAGE_SIZE.ledger)" :disabled="ledgerPage >= totalPagesFor(ledgerEntries, PAGE_SIZE.ledger)">Next</button>
+                </div>
+              </div>
             </div>
-            <div class="detail-item">
-              <span class="label">Date:</span>
-              <span class="value">{{ formatDate(selectedTransaction.date) }}</span>
-            </div>
-            <div class="detail-item">
-              <span class="label">Tourist:</span>
-              <span class="value">{{ selectedTransaction.tourist_name }}</span>
-            </div>
-            <div class="detail-item">
-              <span class="label">Operator:</span>
-              <span class="value">{{ selectedTransaction.operator_name }}</span>
-            </div>
-            <div class="detail-item">
-              <span class="label">Amount:</span>
-              <span class="value">{{ formatCurrency(selectedTransaction.amount) }}</span>
-            </div>
-            <div class="detail-item">
-              <span class="label">Commission ({{ selectedTransaction.commission_rate }}%):</span>
-              <span class="value">{{ formatCurrency(selectedTransaction.commission) }}</span>
-            </div>
-            <div class="detail-item">
-              <span class="label">Payment Method:</span>
-              <span class="value">{{ selectedTransaction.method }}</span>
-            </div>
-            <div class="detail-item">
-              <span class="label">Status:</span>
-              <span :class="['value', `status-${selectedTransaction.status}`]">{{ getStatusLabel(selectedTransaction.status) }}</span>
-            </div>
-          </div>
-        </div>
 
-        <div class="modal-footer">
-          <button @click="closeTransactionModal" class="btn btn-secondary">Close</button>
+            <div class="ledger-list scroll-list compact-scroll">
+              <article v-for="entry in paginatedItems(ledgerEntries, ledgerPage, PAGE_SIZE.ledger)" :key="entry._id" class="ledger-row compact-row">
+                <div>
+                  <strong>{{ readableText(entry.entry_type) }}</strong>
+                  <p>{{ entry.notes || entry.source_reference_type }}</p>
+                </div>
+                <div class="right-stack">
+                  <span :class="['delta-pill', entry.credits_delta >= 0 ? 'positive' : 'negative']">{{ signedCredits(entry.credits_delta) }}</span>
+                  <small>Balance {{ entry.balance_after }}</small>
+                </div>
+              </article>
+              <div v-if="!ledgerEntries.length" class="state-box compact">No ledger entries available.</div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head with-meta">
+              <div>
+                <p class="panel-kicker">Billing events</p>
+                <h2>All recorded event rows</h2>
+              </div>
+              <div class="panel-meta-row">
+                <span class="panel-meta">{{ pageRangeLabel(billingEvents, billingEventsPage, PAGE_SIZE.events) }}</span>
+                <div class="pager">
+                  <button class="pager-btn" type="button" @click="shiftPage(billingEventsPage, -1, billingEvents, PAGE_SIZE.events)" :disabled="billingEventsPage <= 1">Prev</button>
+                  <span>{{ billingEventsPage }} / {{ totalPagesFor(billingEvents, PAGE_SIZE.events) }}</span>
+                  <button class="pager-btn" type="button" @click="shiftPage(billingEventsPage, 1, billingEvents, PAGE_SIZE.events)" :disabled="billingEventsPage >= totalPagesFor(billingEvents, PAGE_SIZE.events)">Next</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="events-table-wrap compact-scroll">
+              <table class="events-table compact-table">
+                <thead>
+                  <tr>
+                    <th>Operator</th>
+                    <th>Surface</th>
+                    <th>Credits</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="event in paginatedItems(billingEvents, billingEventsPage, PAGE_SIZE.events)" :key="event._id">
+                    <td>{{ operatorNameForEvent(event.operator_profile_id) }}</td>
+                    <td>{{ event.source_surface }}</td>
+                    <td>{{ event.credits_charged }}</td>
+                    <td>₹{{ formatMoney(event.currency_amount || 0) }}</td>
+                    <td>{{ event.is_billable ? 'Billable' : event.outcome_reason || 'Rejected' }}</td>
+                  </tr>
+                  <tr v-if="!billingEvents.length">
+                    <td colspan="5" class="empty-inline">No billing events available.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
       </div>
-    </div>
+    </section>
+  </div>
 
-    <!-- Schedule Payout Modal -->
-    <div v-if="showSchedulePayoutModal" class="modal-overlay" @click.self="showSchedulePayoutModal = false">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2>Schedule Payout</h2>
-          <button @click="showSchedulePayoutModal = false" class="close-btn">✕</button>
-        </div>
-
-        <form @submit.prevent="saveScheduledPayout" class="modal-body">
-          <div class="form-group">
-            <label>Operator</label>
-            <input :value="payoutToSchedule?.operator_name" type="text" class="input" disabled />
-          </div>
-
-          <div class="form-group">
-            <label>Amount</label>
-            <input :value="formatCurrency(payoutToSchedule?.amount)" type="text" class="input" disabled />
-          </div>
-
-          <div class="form-group">
-            <label>Schedule Date</label>
-            <input v-model="schedulePayoutForm.date" type="date" class="input" required />
-          </div>
-
-          <div class="form-group">
-            <label>Notes (optional)</label>
-            <textarea v-model="schedulePayoutForm.notes" class="textarea" rows="3"></textarea>
-          </div>
-
-          <div class="form-actions">
-            <button type="button" @click="showSchedulePayoutModal = false" class="btn btn-secondary">Cancel</button>
-            <button type="submit" class="btn btn-primary">🕐 Schedule</button>
-          </div>
-        </form>
+  <div v-if="showPlannerPricingConfirm" class="modal-backdrop" @click.self="cancelPlannerPricingConfirm">
+    <div class="modal-card">
+      <div class="modal-head">
+        <p class="panel-kicker">Confirm pricing change</p>
+        <h3>Enable billable credit charges?</h3>
       </div>
-    </div>
-
-    <!-- Schedule Export Modal -->
-    <div v-if="showScheduleModal" class="modal-overlay" @click.self="showScheduleModal = false">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2>Schedule Export</h2>
-          <button @click="showScheduleModal = false" class="close-btn">✕</button>
-        </div>
-
-        <form @submit.prevent="saveScheduledExport" class="modal-body">
-          <div class="form-group">
-            <label>Frequency</label>
-            <select v-model="scheduleForm.frequency" class="input" required>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label>Export Format</label>
-            <select v-model="scheduleForm.format" class="input" required>
-              <option value="csv">CSV</option>
-              <option value="excel">Excel</option>
-              <option value="pdf">PDF</option>
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label>Recipients (email addresses, comma-separated)</label>
-            <textarea v-model="scheduleForm.recipients" class="textarea" placeholder="email1@example.com, email2@example.com" required></textarea>
-          </div>
-
-          <div class="form-actions">
-            <button type="button" @click="showScheduleModal = false" class="btn btn-secondary">Cancel</button>
-            <button type="submit" class="btn btn-primary">📅 Schedule</button>
-          </div>
-        </form>
+      <p class="modal-copy">You are about to save nonzero billing pricing values. Search clicks and future matching planner events can start consuming credits based on these values while recommendation serving remains tracked-only.</p>
+      <div class="planner-confirm-summary">
+        <span class="tag">Search click {{ pendingPlannerPricing.search_profile_click }}</span>
+        <span class="tag">Planner intent {{ pendingPlannerPricing.planner_intent_click }}</span>
+        <span class="tag">Template save {{ pendingPlannerPricing.conversion }}</span>
+      </div>
+      <div v-if="plannerPricingWarning" class="state-box warning compact">{{ plannerPricingWarning }}</div>
+      <div class="modal-actions">
+        <button class="btn-secondary" type="button" @click="cancelPlannerPricingConfirm" :disabled="savingPlannerPricing">Cancel</button>
+        <button class="btn-primary" type="button" @click="confirmPlannerPricingSave" :disabled="savingPlannerPricing">{{ savingPlannerPricing ? 'Saving…' : 'Confirm save' }}</button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import api from '../services/api'
 
-const activeTab = ref('dashboard')
 const loading = ref(false)
 const loadError = ref('')
+const message = ref({ type: 'info', text: '' })
+const activeTab = ref('overview')
+const plans = ref([])
+const subscriptions = ref([])
+const ledgerEntries = ref([])
+const billingEvents = ref([])
+const touristQuotaLedger = ref([])
+const plannerRewardVerifications = ref([])
+const operators = ref([])
+const billingSummary = ref({ days: 30, planner: { totals: {}, funnel: {}, by_event_type: [] }, by_surface: [] })
+const plannerPricingSettings = ref({ values: { search_profile_click: 1, planner_intent_click: 0, qualified_lead: 0, conversion: 0 }, source: 'environment', updated_at: null, updated_by: null })
+const plannerPricingHistory = ref([])
+const plannerQuotaSettings = ref({ values: { daily_limit: 3, monthly_limit: 10, ad_reward_daily_credits: 1, ad_reward_monthly_credits: 1, promotion_reward_daily_credits: 1, promotion_reward_monthly_credits: 2 }, source: 'environment', updated_at: null, updated_by: null })
+const plannerQuotaHistory = ref([])
+const planDrafts = ref({})
+const savingPlanId = ref('')
+const assigningPlan = ref(false)
+const adjustingCredits = ref(false)
+const savingPlannerPricing = ref(false)
+const savingPlannerQuota = ref(false)
+const showPlannerPricingConfirm = ref(false)
+const pendingPlannerPricing = ref({ search_profile_click: 1, planner_intent_click: 0, qualified_lead: 0, conversion: 0 })
+const plansPage = ref(1)
+const subscriptionsPage = ref(1)
+const ledgerPage = ref(1)
+const billingEventsPage = ref(1)
+const pricingHistoryPage = ref(1)
+const quotaHistoryPage = ref(1)
+const quotaLedgerPage = ref(1)
+const rewardVerificationPage = ref(1)
 
-// Financial Data
-const financialData = ref({
-  totalRevenue: 125750,
-  monthlyRevenue: 15230,
-  pendingPayouts: 8950,
-  pendingPayoutCount: 12,
-  commissionCollected: 18865,
-  commissionPercentage: 15,
-  processingFees: 2105,
-  avgTransaction: 245
+const PAGE_SIZE = {
+  plans: 3,
+  subscriptions: 5,
+  ledger: 6,
+  events: 8,
+  history: 4,
+  quotaLedger: 8,
+  rewards: 8,
+}
+
+const assignmentForm = ref({
+  operator_profile_id: '',
+  plan_code: '',
+  notes: 'Manual activation after review',
+  reset_credits: true,
 })
 
-// Transactions
-const transactions = ref([
-  {
-    _id: '1',
-    transaction_id: 'TXN001',
-    date: new Date('2024-01-20'),
-    tourist_name: 'John Doe',
-    operator_name: 'Adventure Tours',
-    amount: 500,
-    commission: 75,
-    commission_rate: 15,
-    method: 'card',
-    status: 'completed'
-  },
-  {
-    _id: '2',
-    transaction_id: 'TXN002',
-    date: new Date('2024-01-19'),
-    tourist_name: 'Jane Smith',
-    operator_name: 'Mountain Guides',
-    amount: 350,
-    commission: 52.5,
-    commission_rate: 15,
-    method: 'upi',
-    status: 'completed'
-  },
-  {
-    _id: '3',
-    transaction_id: 'TXN003',
-    date: new Date('2024-01-18'),
-    tourist_name: 'Mike Johnson',
-    operator_name: 'Beach Tours',
-    amount: 200,
-    commission: 40,
-    commission_rate: 20,
-    method: 'wallet',
-    status: 'pending'
-  }
-])
-
-const transactionSearch = ref('')
-const transactionFilters = ref({
-  status: '',
-  method: '',
-  minAmount: null,
-  maxAmount: null
+const adjustmentForm = ref({
+  operator_profile_id: '',
+  credits_delta: 0,
+  notes: 'Manual credit adjustment',
 })
-const transactionPage = ref(1)
-const itemsPerPage = ref(10)
 
-const filteredTransactions = computed(() => {
-  return transactions.value.filter(t => {
-    const matchesSearch = !transactionSearch.value || 
-      t.transaction_id.includes(transactionSearch.value) ||
-      t.tourist_name.toLowerCase().includes(transactionSearch.value.toLowerCase()) ||
-      t.operator_name.toLowerCase().includes(transactionSearch.value.toLowerCase())
-    
-    const matchesStatus = !transactionFilters.value.status || t.status === transactionFilters.value.status
-    const matchesMethod = !transactionFilters.value.method || t.method === transactionFilters.value.method
-    const matchesAmount = (!transactionFilters.value.minAmount || t.amount >= transactionFilters.value.minAmount) &&
-      (!transactionFilters.value.maxAmount || t.amount <= transactionFilters.value.maxAmount)
-    
-    return matchesSearch && matchesStatus && matchesMethod && matchesAmount
+const plannerPricingForm = ref({
+  search_profile_click: 1,
+  planner_intent_click: 0,
+  qualified_lead: 0,
+  conversion: 0,
+})
+
+const plannerQuotaForm = ref({
+  daily_limit: 3,
+  monthly_limit: 10,
+  ad_reward_daily_credits: 1,
+  ad_reward_monthly_credits: 1,
+  promotion_reward_daily_credits: 1,
+  promotion_reward_monthly_credits: 2,
+})
+
+const adminHeaders = computed(() => ({
+  Authorization: `Bearer ${localStorage.getItem('adminToken') || ''}`,
+}))
+
+const operatorOptions = computed(() => {
+  const fromOperators = (operators.value || [])
+    .filter(operator => operator.profile?._id)
+    .map(operator => ({
+      operator_profile_id: operator.profile._id,
+      business_name: operator.profile.business_name || operator.full_name || operator.email,
+    }))
+
+  const fromSubscriptions = (subscriptions.value || []).map(subscription => ({
+    operator_profile_id: subscription.operator_profile_id,
+    business_name: subscription.operator_profile?.business_name || subscription.operator_profile_id,
+  }))
+
+  const byId = new Map()
+  ;[...fromOperators, ...fromSubscriptions].forEach((item) => {
+    if (!byId.has(item.operator_profile_id)) {
+      byId.set(item.operator_profile_id, item)
+    }
   })
+  return Array.from(byId.values())
 })
 
-const totalTransactionPages = computed(() => {
-  return Math.ceil(filteredTransactions.value.length / itemsPerPage.value)
+const totalRemainingCredits = computed(() =>
+  subscriptions.value.reduce((sum, item) => sum + Number(item.credits_remaining || 0), 0)
+)
+
+const billableEventCount = computed(() =>
+  billingEvents.value.filter(item => item.is_billable).length
+)
+
+const plannerTotals = computed(() => billingSummary.value?.planner?.totals || {
+  events: 0,
+  billable_events: 0,
+  non_billable_events: 0,
+  credits_consumed: 0,
+  spend_amount: 0,
 })
 
-const paginatedTransactions = computed(() => {
-  const start = (transactionPage.value - 1) * itemsPerPage.value
-  return filteredTransactions.value.slice(start, start + itemsPerPage.value)
+const plannerFunnel = computed(() => billingSummary.value?.planner?.funnel || {
+  recommendations_served: 0,
+  quote_intents: 0,
+  itinerary_saves: 0,
 })
 
-const visibleTransactionPages = computed(() => {
-  const total = totalTransactionPages.value
-  const current = transactionPage.value
-  const pages = []
-  const maxVisible = 5
-  
-  if (total <= maxVisible) {
-    for (let i = 1; i <= total; i++) pages.push(i)
-  } else {
-    const half = Math.floor(maxVisible / 2)
-    let start = Math.max(1, current - half)
-    let end = Math.min(total, start + maxVisible - 1)
-    if (end - start < maxVisible - 1) start = Math.max(1, end - maxVisible + 1)
-    for (let i = start; i <= end; i++) pages.push(i)
+const plannerBreakdown = computed(() => billingSummary.value?.planner?.by_event_type || [])
+const plannerPricing = computed(() => billingSummary.value?.planner?.pricing || {
+  search_profile_click: 1,
+  planner_intent_click: 0,
+  qualified_lead: 0,
+  conversion: 0,
+})
+
+const plannerQuota = computed(() => billingSummary.value?.planner?.quota || {
+  daily_limit: 3,
+  monthly_limit: 10,
+  ad_reward_daily_credits: 1,
+  ad_reward_monthly_credits: 1,
+  promotion_reward_daily_credits: 1,
+  promotion_reward_monthly_credits: 2,
+})
+
+const zeroCreditActiveSubscriptions = computed(() =>
+  subscriptions.value.filter(item => item.plan_status === 'active' && Number(item.included_credits || 0) === 0)
+)
+
+const plannerPricingEnabled = computed(() => {
+  const values = plannerPricingForm.value
+  return Number(values.search_profile_click || 0) > 0 || Number(values.planner_intent_click || 0) > 0 || Number(values.conversion || 0) > 0
+})
+
+const plannerPricingWarning = computed(() => {
+  if (!plannerPricingEnabled.value || !zeroCreditActiveSubscriptions.value.length) return ''
+  const impacted = zeroCreditActiveSubscriptions.value.length
+  return `${impacted} active operator ${impacted === 1 ? 'subscription is' : 'subscriptions are'} still on zero-credit plans. Enabling billable event pricing now will log those events but they will not successfully debit credits until those operators move to plans with credits.`
+})
+
+const plannerQuotaValidation = computed(() => {
+  const values = plannerQuotaForm.value
+  if (Number(values.daily_limit || 0) > Number(values.monthly_limit || 0)) {
+    return 'Daily limit cannot exceed monthly limit.'
   }
-  
-  return pages
-})
-
-// Commissions
-const commissionRules = ref({
-  default: 15,
-  tier1: 12,
-  tier2: 18,
-  holidayMultiplier: 1.2
-})
-
-const commissionSearch = ref('')
-
-const commissions = ref([
-  {
-    _id: '1',
-    operator_name: 'Adventure Tours',
-    period: 'Jan 2024',
-    earned: 2500,
-    adjustments: -100,
-    net: 2400,
-    status: 'settled'
-  },
-  {
-    _id: '2',
-    operator_name: 'Mountain Guides',
-    period: 'Jan 2024',
-    earned: 1800,
-    adjustments: 0,
-    net: 1800,
-    status: 'pending'
-  },
-  {
-    _id: '3',
-    operator_name: 'Beach Tours',
-    period: 'Jan 2024',
-    earned: 950,
-    adjustments: -50,
-    net: 900,
-    status: 'settled'
+  if (Number(values.ad_reward_daily_credits || 0) > Number(values.ad_reward_monthly_credits || 0)) {
+    return 'Ad reward daily bonus cannot exceed the ad monthly bonus.'
   }
-])
-
-const filteredCommissions = computed(() => {
-  return commissions.value.filter(c =>
-    c.operator_name.toLowerCase().includes(commissionSearch.value.toLowerCase())
-  )
-})
-
-// Payouts
-const payoutThreshold = ref(500)
-
-const payouts = ref([
-  {
-    _id: '1',
-    operator_name: 'Adventure Tours',
-    amount: 2400,
-    daysPending: 3,
-    bankName: 'ICICI Bank',
-    accountLast4: '4521'
-  },
-  {
-    _id: '2',
-    operator_name: 'Mountain Guides',
-    amount: 1800,
-    daysPending: 5,
-    bankName: 'HDFC Bank',
-    accountLast4: '7834'
-  },
-  {
-    _id: '3',
-    operator_name: 'Beach Tours',
-    amount: 900,
-    daysPending: 1,
-    bankName: 'Axis Bank',
-    accountLast4: '2156'
+  if (Number(values.promotion_reward_daily_credits || 0) > Number(values.promotion_reward_monthly_credits || 0)) {
+    return 'Promotion reward daily bonus cannot exceed the promotion monthly bonus.'
   }
-])
+  return ''
+})
 
-const pendingPayouts = computed(() => payouts.value.filter(p => p.amount > 0))
+const setMessage = (type, text) => {
+  message.value = { type, text }
+  window.clearTimeout(setMessage.timeoutId)
+  setMessage.timeoutId = window.setTimeout(() => {
+    message.value = { type: 'info', text: '' }
+  }, 4500)
+}
 
-const payoutHistory = ref([
-  {
-    _id: '1',
-    operator_name: 'City Walks',
-    date: new Date('2024-01-15'),
-    amount: 3200,
-    status: 'completed',
-    reference_id: 'PAY20240115001'
-  },
-  {
-    _id: '2',
-    operator_name: 'Heritage Tours',
-    date: new Date('2024-01-12'),
-    amount: 2100,
-    status: 'completed',
-    reference_id: 'PAY20240112001'
+const buildPlanDrafts = () => {
+  const drafts = {}
+  plans.value.forEach((plan) => {
+    drafts[plan._id] = {
+      monthly_price: Number(plan.monthly_price || 0),
+      included_credits: Number(plan.included_credits || 0),
+      is_active: Boolean(plan.is_active),
+    }
+  })
+  planDrafts.value = drafts
+}
+
+const buildPlannerPricingForm = () => {
+  plannerPricingForm.value = {
+    search_profile_click: Number(plannerPricingSettings.value?.values?.search_profile_click || 1),
+    planner_intent_click: Number(plannerPricingSettings.value?.values?.planner_intent_click || 0),
+    qualified_lead: Number(plannerPricingSettings.value?.values?.qualified_lead || 0),
+    conversion: Number(plannerPricingSettings.value?.values?.conversion || 0),
   }
-])
+}
 
-const payoutHistoryFilter = ref({
-  status: ''
-})
-
-const filteredPayoutHistory = computed(() => {
-  return payoutHistory.value.filter(p =>
-    !payoutHistoryFilter.value.status || p.status === payoutHistoryFilter.value.status
-  )
-})
-
-// Reports
-const generatedReports = ref([
-  {
-    _id: '1',
-    name: 'Revenue Report - Jan 2024',
-    generated_at: new Date('2024-01-20')
-  },
-  {
-    _id: '2',
-    name: 'Commission Breakdown - Jan 2024',
-    generated_at: new Date('2024-01-19')
+const buildPlannerQuotaForm = () => {
+  plannerQuotaForm.value = {
+    daily_limit: Number(plannerQuotaSettings.value?.values?.daily_limit || 3),
+    monthly_limit: Number(plannerQuotaSettings.value?.values?.monthly_limit || 10),
+    ad_reward_daily_credits: Number(plannerQuotaSettings.value?.values?.ad_reward_daily_credits || 1),
+    ad_reward_monthly_credits: Number(plannerQuotaSettings.value?.values?.ad_reward_monthly_credits || 1),
+    promotion_reward_daily_credits: Number(plannerQuotaSettings.value?.values?.promotion_reward_daily_credits || 1),
+    promotion_reward_monthly_credits: Number(plannerQuotaSettings.value?.values?.promotion_reward_monthly_credits || 2),
   }
-])
+}
 
-// Export
-const exportFormat = ref('csv')
-const exportData = ref({
-  transactions: true,
-  commissions: true,
-  payouts: true,
-  summaries: true
-})
-const exportDateRange = ref({
-  from: '2024-01-01',
-  to: '2024-01-31'
-})
-const exportOptions = ref({
-  includeCharts: false,
-  compress: false,
-  sendEmail: false
-})
-const exportEmail = ref('')
-const exportSuccess = ref('')
-const exportError = ref('')
+const totalPagesFor = (items, pageSize) => {
+  const totalItems = Array.isArray(items) ? items.length : 0
+  return Math.max(1, Math.ceil(totalItems / pageSize))
+}
 
-const scheduledExports = ref([
-  {
-    _id: '1',
-    frequency: 'Monthly',
-    format: 'PDF',
-    recipients: ['admin@example.com'],
-    next_run: new Date('2024-02-01')
-  }
-])
+const paginatedItems = (items, page, pageSize) => {
+  const list = Array.isArray(items) ? items : []
+  const safePage = Math.max(1, Number(page || 1))
+  const start = (safePage - 1) * pageSize
+  return list.slice(start, start + pageSize)
+}
 
-// Modals
-const showTransactionModal = ref(false)
-const selectedTransaction = ref(null)
-const showSchedulePayoutModal = ref(false)
-const payoutToSchedule = ref(null)
-const schedulePayoutForm = ref({
-  date: '',
-  notes: ''
-})
-const showScheduleModal = ref(false)
-const scheduleForm = ref({
-  frequency: 'monthly',
-  format: 'csv',
-  recipients: ''
-})
+const pageRangeLabel = (items, page, pageSize) => {
+  const list = Array.isArray(items) ? items : []
+  if (!list.length) return '0-0 of 0'
+  const safePage = Math.min(Math.max(1, Number(page || 1)), totalPagesFor(list, pageSize))
+  const start = (safePage - 1) * pageSize + 1
+  const end = Math.min(safePage * pageSize, list.length)
+  return `${start}-${end} of ${list.length}`
+}
 
-const loadFinancialData = async () => {
+const shiftPage = (pageRef, delta, items, pageSize) => {
+  const nextPage = Math.min(totalPagesFor(items, pageSize), Math.max(1, pageRef.value + delta))
+  pageRef.value = nextPage
+}
+
+const resetAllPages = () => {
+  plansPage.value = 1
+  subscriptionsPage.value = 1
+  ledgerPage.value = 1
+  billingEventsPage.value = 1
+  pricingHistoryPage.value = 1
+  quotaHistoryPage.value = 1
+  quotaLedgerPage.value = 1
+  rewardVerificationPage.value = 1
+}
+
+const loadAll = async () => {
   loading.value = true
   loadError.value = ''
-
   try {
-    const token = localStorage.getItem('adminToken')
-    if (!token) {
-      loadError.value = 'Admin token not found. Please login again.'
-      return
-    }
-
-    const headers = { Authorization: `Bearer ${token}` }
-
-    const [overviewRes, transactionsRes, commissionsRes, payoutsRes, reportsRes] = await Promise.all([
-      api.get('/admin/financial/overview', { headers }),
-      api.get('/admin/financial/transactions', { headers }),
-      api.get('/admin/financial/commissions', { headers }),
-      api.get('/admin/financial/payouts', { headers }),
-      api.get('/admin/financial/reports', { headers })
+    const [plansRes, subscriptionsRes, ledgerRes, eventsRes, summaryRes, pricingRes, historyRes, quotaRes, quotaHistoryRes, quotaLedgerRes, rewardVerificationRes, operatorsRes] = await Promise.all([
+      api.get('/admin/billing/plans', { headers: adminHeaders.value }),
+      api.get('/admin/billing/subscriptions', { headers: adminHeaders.value }),
+      api.get('/admin/billing/ledger', { headers: adminHeaders.value }),
+      api.get('/admin/billing/events', { headers: adminHeaders.value }),
+      api.get('/admin/billing/summary', { headers: adminHeaders.value }),
+      api.get('/admin/billing/planner-pricing', { headers: adminHeaders.value }),
+      api.get('/admin/billing/planner-pricing/history', { headers: adminHeaders.value }),
+      api.get('/admin/billing/planner-quota', { headers: adminHeaders.value }),
+      api.get('/admin/billing/planner-quota/history', { headers: adminHeaders.value }),
+      api.get('/admin/billing/planner-quota/ledger', { headers: adminHeaders.value }),
+      api.get('/admin/billing/planner-quota/reward-verifications', { headers: adminHeaders.value }),
+      api.get('/admin/operators?skip=0&limit=200', { headers: adminHeaders.value }),
     ])
 
-    financialData.value = {
-      ...financialData.value,
-      ...(overviewRes.data || {})
-    }
-
-    if (Array.isArray(transactionsRes.data?.transactions)) {
-      transactions.value = transactionsRes.data.transactions
-    }
-
-    if (Array.isArray(commissionsRes.data?.commissions)) {
-      commissions.value = commissionsRes.data.commissions
-    }
-
-    if (Array.isArray(payoutsRes.data?.pending)) {
-      payouts.value = payoutsRes.data.pending
-    }
-
-    if (Array.isArray(payoutsRes.data?.history)) {
-      payoutHistory.value = payoutsRes.data.history
-    }
-
-    if (Array.isArray(reportsRes.data?.generated)) {
-      generatedReports.value = reportsRes.data.generated
-    }
-
-    if (Array.isArray(reportsRes.data?.scheduled)) {
-      scheduledExports.value = reportsRes.data.scheduled
-    }
+    plans.value = plansRes.data.plans || []
+    subscriptions.value = subscriptionsRes.data.subscriptions || []
+    ledgerEntries.value = ledgerRes.data.entries || []
+    billingEvents.value = eventsRes.data.events || []
+    billingSummary.value = summaryRes.data || { days: 30, planner: { totals: {}, funnel: {}, by_event_type: [] }, by_surface: [] }
+    plannerPricingSettings.value = pricingRes.data.settings || { values: { search_profile_click: 1, planner_intent_click: 0, qualified_lead: 0, conversion: 0 }, source: 'environment', updated_at: null, updated_by: null }
+    plannerPricingHistory.value = historyRes.data.history || []
+    plannerQuotaSettings.value = quotaRes.data.settings || { values: { daily_limit: 3, monthly_limit: 10, ad_reward_daily_credits: 1, ad_reward_monthly_credits: 1, promotion_reward_daily_credits: 1, promotion_reward_monthly_credits: 2 }, source: 'environment', updated_at: null, updated_by: null }
+    plannerQuotaHistory.value = quotaHistoryRes.data.history || []
+    touristQuotaLedger.value = quotaLedgerRes.data.entries || []
+    plannerRewardVerifications.value = rewardVerificationRes.data.records || []
+    operators.value = operatorsRes.data.operators || []
+    resetAllPages()
+    buildPlanDrafts()
+    buildPlannerPricingForm()
+    buildPlannerQuotaForm()
   } catch (error) {
-    console.error('Failed to load financial admin data:', error)
-    loadError.value = error.response?.data?.detail || 'Failed to load financial data'
+    console.error('Failed to load billing admin data:', error)
+    loadError.value = error.response?.data?.detail || 'Failed to load billing controls'
   } finally {
     loading.value = false
   }
 }
 
-onMounted(() => {
-  loadFinancialData()
+const normalizePlannerPricingForm = () => ({
+  search_profile_click: Math.max(0, Math.min(100, Number(plannerPricingForm.value.search_profile_click || 0))),
+  planner_intent_click: Math.max(0, Math.min(100, Number(plannerPricingForm.value.planner_intent_click || 0))),
+  qualified_lead: 0,
+  conversion: Math.max(0, Math.min(100, Number(plannerPricingForm.value.conversion || 0))),
 })
 
-// Methods
-const formatCurrency = (amount) => {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR'
-  }).format(amount)
-}
+const normalizePlannerQuotaForm = () => ({
+  daily_limit: Math.max(0, Math.min(100, Number(plannerQuotaForm.value.daily_limit || 0))),
+  monthly_limit: Math.max(0, Math.min(1000, Number(plannerQuotaForm.value.monthly_limit || 0))),
+  ad_reward_daily_credits: Math.max(0, Math.min(20, Number(plannerQuotaForm.value.ad_reward_daily_credits || 0))),
+  ad_reward_monthly_credits: Math.max(0, Math.min(100, Number(plannerQuotaForm.value.ad_reward_monthly_credits || 0))),
+  promotion_reward_daily_credits: Math.max(0, Math.min(20, Number(plannerQuotaForm.value.promotion_reward_daily_credits || 0))),
+  promotion_reward_monthly_credits: Math.max(0, Math.min(100, Number(plannerQuotaForm.value.promotion_reward_monthly_credits || 0))),
+})
 
-const formatDate = (date) => {
-  if (!date) return 'N/A'
-  return new Date(date).toLocaleDateString('en-IN')
-}
-
-const getPaymentMethodIcon = (method) => {
-  const icons = {
-    card: '💳',
-    upi: '📱',
-    wallet: '👛'
-  }
-  return icons[method] || '💳'
-}
-
-const getStatusLabel = (status) => {
-  const labels = {
-    completed: '✓ Completed',
-    pending: '⏳ Pending',
-    failed: '✗ Failed',
-    processing: '⏳ Processing'
-  }
-  return labels[status] || status
-}
-
-const viewTransactionDetail = (transaction) => {
-  selectedTransaction.value = transaction
-  showTransactionModal.value = true
-}
-
-const closeTransactionModal = () => {
-  showTransactionModal.value = false
-  selectedTransaction.value = null
-}
-
-const refundTransaction = async (transaction) => {
-  if (confirm(`Refund transaction ${transaction.transaction_id}?`)) {
-    transaction.status = 'failed'
+const persistPlannerPricing = async (payload) => {
+  savingPlannerPricing.value = true
+  try {
+    await api.post('/admin/billing/planner-pricing', payload, { headers: adminHeaders.value })
+    setMessage('success', 'Billing credit values saved')
+    showPlannerPricingConfirm.value = false
+    await loadAll()
+  } catch (error) {
+    console.error('Failed to save planner pricing:', error)
+    setMessage('error', error.response?.data?.detail || 'Failed to save billing pricing')
+  } finally {
+    savingPlannerPricing.value = false
   }
 }
 
-const markDisputed = async (transaction) => {
-  if (confirm(`Mark transaction ${transaction.transaction_id} as disputed?`)) {
-    alert('Transaction marked as disputed. Support team will review.')
+const persistPlannerQuota = async (payload) => {
+  savingPlannerQuota.value = true
+  try {
+    await api.post('/admin/billing/planner-quota', payload, { headers: adminHeaders.value })
+    setMessage('success', 'Planner quota settings saved')
+    await loadAll()
+  } catch (error) {
+    console.error('Failed to save planner quota:', error)
+    setMessage('error', error.response?.data?.detail || 'Failed to save planner quota settings')
+  } finally {
+    savingPlannerQuota.value = false
   }
 }
 
-const saveCommissionRules = async () => {
-  alert('Commission rules saved successfully!')
-}
-
-const saveBulkPayoutSettings = async () => {
-  alert(`Minimum payout threshold set to ${formatCurrency(payoutThreshold.value)}`)
-}
-
-const initiatePayoutAll = async () => {
-  if (confirm(`Process payouts for ${pendingPayouts.value.length} operators?`)) {
-    alert('Payout batch processing initiated!')
-  }
-}
-
-const initiatePayout = async (payout) => {
-  if (confirm(`Initiate payout of ${formatCurrency(payout.amount)} to ${payout.operator_name}?`)) {
-    alert('Payout initiated successfully!')
-  }
-}
-
-const schedulePayout = (payout) => {
-  payoutToSchedule.value = payout
-  schedulePayoutForm.value = { date: '', notes: '' }
-  showSchedulePayoutModal.value = true
-}
-
-const saveScheduledPayout = async () => {
-  alert(`Payout scheduled for ${schedulePayoutForm.value.date}`)
-  showSchedulePayoutModal.value = false
-}
-
-const generateReport = async (type) => {
-  const reportNames = {
-    revenue: 'Revenue Report',
-    commission: 'Commission Breakdown',
-    operators: 'Operator Earnings',
-    methods: 'Payment Methods Analysis',
-    growth: 'Growth Metrics',
-    cac: 'Customer Acquisition Cost'
-  }
-  
-  generatedReports.value.unshift({
-    _id: Date.now().toString(),
-    name: `${reportNames[type]} - ${new Date().toLocaleDateString('en-IN')}`,
-    generated_at: new Date()
-  })
-  
-  alert(`${reportNames[type]} generated successfully!`)
-}
-
-const downloadReport = async (report) => {
-  alert(`Downloading: ${report.name}`)
-}
-
-const deleteReport = (report) => {
-  const index = generatedReports.value.findIndex(r => r._id === report._id)
-  if (index > -1) {
-    generatedReports.value.splice(index, 1)
-  }
-}
-
-const exportFinancialData = async () => {
-  exportError.value = ''
-  exportSuccess.value = ''
-  
-  if (!exportData.value.transactions && !exportData.value.commissions && 
-      !exportData.value.payouts && !exportData.value.summaries) {
-    exportError.value = 'Please select at least one data type to export'
+const savePlannerPricing = async () => {
+  const payload = normalizePlannerPricingForm()
+  const requiresConfirmation = payload.search_profile_click > 0 || payload.planner_intent_click > 0 || payload.conversion > 0
+  if (requiresConfirmation) {
+    pendingPlannerPricing.value = payload
+    showPlannerPricingConfirm.value = true
     return
   }
-  
-  if (exportOptions.value.sendEmail && !exportEmail.value) {
-    exportError.value = 'Please provide an email address'
+  await persistPlannerPricing(payload)
+}
+
+const confirmPlannerPricingSave = async () => {
+  await persistPlannerPricing({ ...pendingPlannerPricing.value })
+}
+
+const cancelPlannerPricingConfirm = () => {
+  showPlannerPricingConfirm.value = false
+}
+
+const resetPlannerPricing = () => {
+  plannerPricingForm.value = { search_profile_click: 0, planner_intent_click: 0, qualified_lead: 0, conversion: 0 }
+}
+
+const savePlannerQuota = async () => {
+  if (plannerQuotaValidation.value) {
+    setMessage('error', plannerQuotaValidation.value)
     return
   }
-  
-  exportSuccess.value = `Financial data exported as ${exportFormat.value.toUpperCase()} and ready for download!`
-  resetExportForm()
-  setTimeout(() => { exportSuccess.value = '' }, 3000)
+  await persistPlannerQuota(normalizePlannerQuotaForm())
 }
 
-const resetExportForm = () => {
-  exportData.value = { transactions: true, commissions: true, payouts: true, summaries: true }
-  exportEmail.value = ''
-  exportOptions.value = { includeCharts: false, compress: false, sendEmail: false }
-}
-
-const saveScheduledExport = async () => {
-  const recipients = scheduleForm.value.recipients.split(',').map(r => r.trim())
-  scheduledExports.value.unshift({
-    _id: Date.now().toString(),
-    frequency: scheduleForm.value.frequency,
-    format: scheduleForm.value.format,
-    recipients,
-    next_run: new Date()
-  })
-  
-  alert('Export scheduled successfully!')
-  showScheduleModal.value = false
-  scheduleForm.value = { frequency: 'monthly', format: 'csv', recipients: '' }
-}
-
-const deleteScheduledExport = (scheduled) => {
-  const index = scheduledExports.value.findIndex(s => s._id === scheduled._id)
-  if (index > -1) {
-    scheduledExports.value.splice(index, 1)
+const resetPlannerQuota = () => {
+  plannerQuotaForm.value = {
+    daily_limit: 3,
+    monthly_limit: 10,
+    ad_reward_daily_credits: 1,
+    ad_reward_monthly_credits: 1,
+    promotion_reward_daily_credits: 1,
+    promotion_reward_monthly_credits: 2,
   }
 }
+
+const savePlan = async (plan) => {
+  const draft = planDrafts.value[plan._id]
+  if (!draft) return
+  savingPlanId.value = plan._id
+  try {
+    await api.patch(`/admin/billing/plans/${plan._id}`, draft, { headers: adminHeaders.value })
+    setMessage('success', `Updated ${plan.name}`)
+    await loadAll()
+  } catch (error) {
+    console.error('Failed to save billing plan:', error)
+    setMessage('error', error.response?.data?.detail || 'Failed to save billing plan')
+  } finally {
+    savingPlanId.value = ''
+  }
+}
+
+const assignPlan = async () => {
+  assigningPlan.value = true
+  try {
+    await api.post(
+      `/admin/billing/subscriptions/${assignmentForm.value.operator_profile_id}/assign`,
+      assignmentForm.value,
+      { headers: adminHeaders.value }
+    )
+    setMessage('success', 'Operator plan assigned')
+    assignmentForm.value = {
+      operator_profile_id: '',
+      plan_code: '',
+      notes: 'Manual activation after review',
+      reset_credits: true,
+    }
+    await loadAll()
+  } catch (error) {
+    console.error('Failed to assign plan:', error)
+    setMessage('error', error.response?.data?.detail || 'Failed to assign operator plan')
+  } finally {
+    assigningPlan.value = false
+  }
+}
+
+const submitAdjustment = async () => {
+  adjustingCredits.value = true
+  try {
+    await api.post('/admin/billing/adjustments', adjustmentForm.value, { headers: adminHeaders.value })
+    setMessage('success', 'Credit adjustment applied')
+    adjustmentForm.value = {
+      operator_profile_id: '',
+      credits_delta: 0,
+      notes: 'Manual credit adjustment',
+    }
+    await loadAll()
+  } catch (error) {
+    console.error('Failed to apply credit adjustment:', error)
+    setMessage('error', error.response?.data?.detail || 'Failed to apply credit adjustment')
+  } finally {
+    adjustingCredits.value = false
+  }
+}
+
+const readableText = (value) => String(value || '').replaceAll('_', ' ')
+const signedCredits = (value) => `${value > 0 ? '+' : ''}${value}`
+const formatMoney = (value) => Number(value || 0).toFixed(2)
+const formatDateTime = (value) => value ? new Date(value).toLocaleString() : 'Never'
+const formatPricingTriple = (value) => {
+  const pricing = value || {}
+  return `S:${Number(pricing.search_profile_click || 0)} P:${Number(pricing.planner_intent_click || 0)} T:${Number(pricing.conversion || 0)}`
+}
+const formatQuotaSummary = (value) => {
+  const quota = value || {}
+  return `D:${Number(quota.daily_limit || 0)} M:${Number(quota.monthly_limit || 0)} Ad:+${Number(quota.ad_reward_daily_credits || 0)}/+${Number(quota.ad_reward_monthly_credits || 0)} Promo:+${Number(quota.promotion_reward_daily_credits || 0)}/+${Number(quota.promotion_reward_monthly_credits || 0)}`
+}
+const operatorNameForEvent = (operatorProfileId) => {
+  const subscription = subscriptions.value.find(item => item.operator_profile_id === operatorProfileId)
+  if (subscription?.operator_profile?.business_name) return subscription.operator_profile.business_name
+  const operator = operatorOptions.value.find(item => item.operator_profile_id === operatorProfileId)
+  return operator?.business_name || operatorProfileId
+}
+
+const touristLabel = (record) => {
+  const user = record?.tourist_user || {}
+  return user.full_name || user.email || record?.user_id || 'Unknown tourist'
+}
+
+onMounted(loadAll)
 </script>
 
 <style scoped>
+:global(body) {
+  background:
+    radial-gradient(circle at top left, rgba(14, 165, 233, 0.08), transparent 28%),
+    radial-gradient(circle at top right, rgba(16, 185, 129, 0.08), transparent 22%),
+    #f4f8fc;
+}
+
 .admin-financial {
-  width: 100%;
+  --surface: rgba(255, 255, 255, 0.9);
+  --surface-strong: #ffffff;
+  --surface-muted: #f8fbff;
+  --stroke: #d9e3ee;
+  --stroke-strong: #c7d6e5;
+  --text: #0f172a;
+  --text-muted: #5f6f84;
+  --accent: #0f766e;
+  --accent-soft: #ecfeff;
+  font-size: 0.94rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.4rem;
+  padding: 0.25rem 0 1rem;
 }
 
 .page-header {
-  margin-bottom: 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1.5rem;
+  padding: 1.45rem 1.55rem;
+  border: 1px solid rgba(209, 221, 235, 0.9);
+  border-radius: 24px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 255, 0.92)),
+    linear-gradient(120deg, rgba(14, 165, 233, 0.08), rgba(16, 185, 129, 0.06));
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.08);
+}
+
+.header-copy {
+  max-width: 760px;
+}
+
+.header-eyebrow,
+.metric-label,
+.panel-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7c8ea3;
 }
 
 .page-header h1 {
-  font-size: 2rem;
-  font-weight: 700;
-  color: #1a202c;
-  margin: 0 0 0.5rem 0;
+  margin: 0.45rem 0 0;
+  font-size: clamp(1.85rem, 2vw, 2.4rem);
+  line-height: 1.05;
+  color: var(--text);
 }
 
 .subtitle {
-  color: #718096;
-  font-size: 1rem;
-  margin: 0;
+  margin: 0.65rem 0 0;
+  max-width: 62ch;
+  color: var(--text-muted);
+  line-height: 1.6;
 }
 
-.status-message {
-  background: #ebf8ff;
-  color: #2b6cb0;
-  border: 1px solid #bee3f8;
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
-}
-
-.error-message {
-  background: #fff5f5;
-  color: #c53030;
-  border: 1px solid #fed7d7;
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
-}
-
-/* Tabs */
-.tabs {
+.header-actions {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 2rem;
-  border-bottom: 2px solid #e2e8f0;
-  overflow-x: auto;
-  padding-bottom: 0;
-}
-
-.tab {
-  padding: 1rem 1.5rem;
-  border: none;
-  background: none;
-  color: #718096;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-  border-bottom: 3px solid transparent;
-  margin-bottom: -2px;
-  white-space: nowrap;
-}
-
-.tab:hover {
-  color: #667eea;
-}
-
-.tab.active {
-  color: #667eea;
-  border-bottom-color: #667eea;
-}
-
-.tab-content {
-  animation: fadeIn 0.3s ease-in;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-/* Dashboard Tab */
-.metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 1.5rem;
-  margin-bottom: 2rem;
-}
-
-.metric-card {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 1.5rem;
-  display: flex;
-  gap: 1.5rem;
-  align-items: center;
-  transition: all 0.2s;
-}
-
-.metric-card:hover {
-  border-color: #667eea;
-  box-shadow: 0 5px 15px rgba(102, 126, 234, 0.1);
-}
-
-.metric-icon {
-  font-size: 2.5rem;
-  min-width: 60px;
-}
-
-.metric-content {
-  flex: 1;
-}
-
-.metric-label {
-  margin: 0;
-  font-size: 0.85rem;
-  color: #718096;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 600;
-}
-
-.metric-value {
-  margin: 0.5rem 0 0.25rem 0;
-  font-size: 1.75rem;
-  font-weight: 700;
-  color: #1a202c;
-}
-
-.metric-subtitle {
-  margin: 0;
-  font-size: 0.85rem;
-  color: #a0aec0;
-}
-
-.charts-section {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 2rem;
-}
-
-.chart-container {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 1.5rem;
-}
-
-.chart-container h3 {
-  margin: 0 0 1rem 0;
-  color: #1a202c;
-  font-size: 1.1rem;
-}
-
-.chart-placeholder {
-  text-align: center;
-  color: #718096;
-  padding: 2rem 1rem;
-}
-
-.chart-bars {
-  display: flex;
+  flex-direction: column;
   align-items: flex-end;
-  justify-content: space-around;
-  gap: 0.5rem;
-  margin-top: 1rem;
-  height: 150px;
+  gap: 0.7rem;
+  min-width: 180px;
 }
 
-.chart-bar {
-  width: 100%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 4px;
-  transition: all 0.2s;
-}
-
-.chart-bar:hover {
-  opacity: 0.8;
-}
-
-.payment-breakdown {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  margin-top: 1rem;
-}
-
-.payment-item {
-  display: flex;
+.header-status {
+  display: inline-flex;
   align-items: center;
-  gap: 1rem;
-}
-
-.payment-label {
-  min-width: 60px;
-  font-weight: 600;
-  color: #2d3748;
-}
-
-.payment-bar {
-  height: 20px;
-  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-  border-radius: 10px;
-  flex: 1;
-}
-
-.payment-value {
-  min-width: 40px;
-  text-align: right;
-  font-weight: 600;
-  color: #667eea;
-}
-
-/* Transactions Tab */
-.transaction-controls,
-.commission-search,
-.payout-history-controls {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
-}
-
-.search-input {
-  flex: 1;
-  min-width: 200px;
-  padding: 0.75rem;
-  border: 2px solid #e2e8f0;
-  border-radius: 8px;
-  font-size: 0.95rem;
-}
-
-.filter-select,
-.filter-input {
-  padding: 0.75rem;
-  border: 2px solid #e2e8f0;
-  border-radius: 8px;
-  font-size: 0.95rem;
-  background: white;
-  cursor: pointer;
-}
-
-.filter-input {
-  width: 150px;
-}
-
-.transactions-table {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  overflow: hidden;
-}
-
-.table-header {
-  display: grid;
-  grid-template-columns: 80px 100px 120px 120px 80px 100px 80px 100px 80px;
-  gap: 0;
-  background: #f7fafc;
-  padding: 0;
-  border-bottom: 2px solid #e2e8f0;
-  font-weight: 600;
-  color: #2d3748;
-}
-
-.table-header .col {
-  padding: 1rem;
-  border-right: 1px solid #e2e8f0;
-}
-
-.table-header .col:last-child {
-  border-right: none;
-}
-
-.table-row {
-  display: grid;
-  grid-template-columns: 80px 100px 120px 120px 80px 100px 80px 100px 80px;
-  gap: 0;
-  border-bottom: 1px solid #e2e8f0;
-  align-items: center;
-}
-
-.table-row:hover {
-  background: #f7fafc;
-}
-
-.col {
-  padding: 1rem;
-  border-right: 1px solid #e2e8f0;
-  font-size: 0.9rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.col:last-child {
-  border-right: none;
-}
-
-.status-badge {
-  display: inline-block;
-  padding: 0.25rem 0.75rem;
-  border-radius: 6px;
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.status-completed {
-  background: #dcfce7;
-  color: #166534;
-}
-
-.status-pending {
-  background: #fef3c7;
-  color: #b45309;
-}
-
-.status-failed {
-  background: #fee2e2;
-  color: #991b1b;
-}
-
-.action-btn {
-  padding: 0.3rem 0.6rem;
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: 1rem;
-  transition: all 0.2s;
-  border-radius: 4px;
-}
-
-.action-btn:hover {
-  background: rgba(102, 126, 234, 0.1);
-}
-
-.action-btn.view {
-  color: #0284c7;
-}
-
-.action-btn.refund {
-  color: #667eea;
-}
-
-.action-btn.dispute {
-  color: #f59e0b;
-}
-
-.pagination {
-  display: flex;
-  justify-content: center;
-  gap: 1rem;
-  align-items: center;
-  margin-top: 1.5rem;
-  padding: 1rem;
-}
-
-.pagination-btn {
-  padding: 0.5rem 1rem;
-  border: 2px solid #e2e8f0;
-  background: white;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.pagination-btn:hover:not(:disabled) {
-  border-color: #667eea;
-  color: #667eea;
-}
-
-.pagination-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.page-buttons {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.page-btn {
-  padding: 0.5rem 0.75rem;
-  border: 2px solid #e2e8f0;
-  background: white;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.page-btn:hover {
-  border-color: #667eea;
-}
-
-.page-btn.active {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-color: transparent;
-  color: white;
-}
-
-/* Commissions Tab */
-.commissions-container,
-.payouts-container,
-.reports-container,
-.export-container {
-  display: flex;
-  flex-direction: column;
-  gap: 2rem;
-}
-
-.section {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 1.5rem;
-}
-
-.section h3 {
-  margin: 0 0 1.5rem 0;
-  color: #1a202c;
-  font-size: 1.1rem;
-  font-weight: 600;
-}
-
-.commission-rules {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1.5rem;
-  margin-bottom: 1.5rem;
-}
-
-.rule-card {
-  padding: 1rem;
-  background: #f7fafc;
-  border-radius: 8px;
-}
-
-.rule-card label {
-  display: block;
-  font-weight: 600;
-  margin-bottom: 0.5rem;
-  color: #2d3748;
-}
-
-.input-group {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.input {
-  padding: 0.5rem;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  font-size: 0.9rem;
-}
-
-.unit {
-  font-weight: 600;
-  color: #667eea;
-}
-
-.rule-note {
-  margin: 0.5rem 0 0 0;
-  font-size: 0.8rem;
-  color: #718096;
-}
-
-.commissions-list,
-.payouts-grid,
-.payout-history-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 1.5rem;
-}
-
-.commission-card,
-.payout-card {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 1.5rem;
-  transition: all 0.2s;
-}
-
-.commission-card:hover,
-.payout-card:hover {
-  border-color: #667eea;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-}
-
-.commission-header,
-.payout-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1rem;
-}
-
-.commission-header h4,
-.payout-header h4 {
-  margin: 0;
-  color: #1a202c;
-}
-
-.commission-total,
-.payout-amount {
-  font-size: 1.5rem;
+  gap: 0.45rem;
+  padding: 0.38rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--accent);
+  font-size: 0.77rem;
   font-weight: 700;
-  color: #667eea;
 }
 
-.commission-details {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  margin-bottom: 1rem;
-}
-
-.detail-item {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.9rem;
-}
-
-.detail-item .label {
-  font-weight: 600;
-  color: #718096;
-}
-
-.detail-item .value {
-  color: #1a202c;
-  font-weight: 500;
-}
-
-.commission-note,
-.payout-details p {
-  margin: 0;
-  font-size: 0.85rem;
-  color: #718096;
-}
-
-.payout-details {
-  margin-bottom: 1rem;
-}
-
-.payout-details p {
-  margin: 0.5rem 0;
-  display: flex;
-  justify-content: space-between;
-}
-
-.payout-actions {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.btn {
-  padding: 0.75rem 1.5rem;
-  border: none;
-  border-radius: 8px;
-  font-weight: 600;
+.btn-refresh,
+.btn-primary,
+.btn-secondary {
+  border-radius: 12px;
+  font: inherit;
+  font-weight: 700;
   cursor: pointer;
-  transition: all 0.2s;
-  font-size: 0.95rem;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease, background 140ms ease;
 }
 
-.btn-primary {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+.btn-refresh:hover,
+.btn-primary:hover,
+.btn-secondary:hover {
+  transform: translateY(-1px);
 }
 
-.btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+.btn-refresh,
+.btn-secondary {
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.92);
+  color: #334155;
+  box-shadow: 0 8px 16px rgba(148, 163, 184, 0.12);
+}
+
+.btn-refresh {
+  padding: 0.8rem 1rem;
 }
 
 .btn-secondary {
-  background: #e2e8f0;
-  color: #2d3748;
+  padding: 0.78rem 1rem;
 }
 
-.btn-secondary:hover {
-  background: #cbd5e0;
+.btn-primary {
+  border: none;
+  background: linear-gradient(135deg, #0f766e, #0ea5e9);
+  color: #fff;
+  padding: 0.82rem 1rem;
+  box-shadow: 0 12px 22px rgba(14, 165, 233, 0.22);
 }
 
-.btn-small {
-  padding: 0.5rem 1rem;
-  font-size: 0.85rem;
+.message-banner,
+.state-box {
+  padding: 0.95rem 1rem;
+  border-radius: 16px;
 }
 
-.btn-danger {
-  background: #fee2e2;
-  color: #991b1b;
+.message-banner.success {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
 }
 
-.btn-danger:hover {
-  background: #fecaca;
+.message-banner.error,
+.state-box.error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
 }
 
-.payout-history-list {
-  grid-template-columns: 1fr;
+.state-box.warning {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #c2410c;
 }
 
-.history-item {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 1.5rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  transition: all 0.2s;
-}
-
-.history-item:hover {
-  border-color: #667eea;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-}
-
-.history-content {
-  flex: 1;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.history-main h4 {
-  margin: 0;
-  color: #1a202c;
-}
-
-.history-date {
-  font-size: 0.85rem;
-  color: #718096;
-  display: block;
-  margin-top: 0.25rem;
-}
-
-.history-details {
-  display: flex;
-  gap: 2rem;
-  align-items: center;
-}
-
-.amount {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: #667eea;
-}
-
-.status {
-  display: inline-block;
-  padding: 0.25rem 0.75rem;
-  border-radius: 6px;
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.reference {
-  font-size: 0.85rem;
-  color: #a0aec0;
-  margin-top: 0.5rem;
-}
-
-/* Reports Tab */
-.report-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 1.5rem;
-  margin-bottom: 2rem;
-}
-
-.report-card {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 1.5rem;
+.state-box {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px dashed var(--stroke-strong);
+  color: var(--text-muted);
   text-align: center;
-  transition: all 0.2s;
 }
 
-.report-card:hover {
-  border-color: #667eea;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+.state-box.compact {
+  margin-top: 0.85rem;
 }
 
-.report-icon {
-  font-size: 2.5rem;
-  margin-bottom: 0.5rem;
-}
-
-.report-card h4 {
-  margin: 0.5rem 0;
-  color: #1a202c;
-}
-
-.report-card p {
-  margin: 0.75rem 0;
-  font-size: 0.9rem;
-  color: #718096;
-}
-
-.generated-reports {
-  margin-top: 2rem;
-}
-
-.generated-reports h4 {
-  margin: 0 0 1rem 0;
-  color: #1a202c;
-}
-
-.reports-list {
-  display: flex;
-  flex-direction: column;
+.tab-shell {
+  display: grid;
   gap: 1rem;
 }
 
-.report-item {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 1.5rem;
+.tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.7rem;
+  border: 1px solid rgba(214, 223, 234, 0.92);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.05);
+}
+
+.tab-button {
+  min-width: 138px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 0.95rem;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.tab-button:hover {
+  transform: translateY(-1px);
+  background: rgba(248, 251, 255, 0.92);
+  border-color: var(--stroke);
+}
+
+.tab-button.active {
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.12), rgba(14, 165, 233, 0.14));
+  border-color: rgba(14, 165, 233, 0.2);
+  color: var(--text);
+}
+
+.tab-button small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.7rem;
+  height: 1.7rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.tab-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.metrics-grid,
+.grid.two-col,
+.planner-admin-grid,
+.control-grid,
+.planner-metrics-grid,
+.planner-pricing-grid,
+.plan-edit-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.metrics-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.grid.two-col {
+  grid-template-columns: minmax(0, 1.08fr) minmax(340px, 0.92fr);
+  align-items: start;
+}
+
+.planner-admin-grid,
+.control-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.planner-metrics-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.planner-pricing-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.plan-edit-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.planner-row,
+.second-row {
+  margin-top: 0.15rem;
+}
+
+.metric-card,
+.panel,
+.surface-card,
+.control-card {
+  border-radius: 22px;
+  border: 1px solid rgba(214, 223, 234, 0.92);
+  background: var(--surface);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.07);
+}
+
+.metric-card {
+  position: relative;
+  overflow: hidden;
+  padding: 1.1rem 1rem 1rem;
+}
+
+.metric-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 3px;
+  background: linear-gradient(90deg, rgba(15, 118, 110, 0.9), rgba(14, 165, 233, 0.6));
+}
+
+.metric-card.compact {
+  padding: 0.95rem;
+}
+
+.metric-card.wide {
+  grid-column: span 2;
+}
+
+.metric-card strong {
+  display: block;
+  margin-top: 0.45rem;
+  font-size: 1.55rem;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+
+.metric-card p {
+  margin: 0.4rem 0 0;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.panel {
+  padding: 1.35rem;
+}
+
+.planner-hub-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(249, 252, 255, 0.92));
+}
+
+.surface-card,
+.control-card {
+  padding: 1rem;
+}
+
+.panel-head,
+.planner-pricing-head,
+.plan-top,
+.subscription-row,
+.ledger-row,
+.planner-history-row,
+.row-actions,
+.modal-actions {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.panel-head {
+  margin-bottom: 1rem;
+}
+
+.panel-head.with-meta {
   align-items: center;
 }
 
-.report-info {
-  flex: 1;
-}
-
-.report-name {
+.panel-head h2,
+.planner-pricing-head h3,
+.plan-card h3,
+.subscription-row h3,
+.ledger-row strong,
+.control-card-head h3,
+.modal-head h3 {
   margin: 0;
-  font-weight: 600;
-  color: #1a202c;
+  color: var(--text);
 }
 
-.report-date {
-  margin: 0.25rem 0 0 0;
-  font-size: 0.85rem;
-  color: #718096;
+.planner-pricing-head,
+.control-card-head {
+  margin-bottom: 0.9rem;
 }
 
-.report-actions {
+.panel-meta-row {
   display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.panel-meta {
+  color: #7c8ea3;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pager {
+  display: inline-flex;
+  align-items: center;
   gap: 0.5rem;
+  padding: 0.28rem 0.36rem;
+  border: 1px solid var(--stroke);
+  border-radius: 999px;
+  background: rgba(248, 251, 255, 0.9);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
-/* Export Tab */
-.export-options {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 1.5rem;
-  margin-bottom: 1.5rem;
+.pager-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 0.35rem 0.6rem;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(148, 163, 184, 0.14);
 }
 
-.option-card {
-  background: #f7fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 1.5rem;
+.pager-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
-.option-card h4 {
-  margin: 0 0 1rem 0;
-  color: #1a202c;
+.planner-pricing-note,
+.planner-pricing-meta,
+.modal-copy,
+.control-card-head p,
+.plan-card p,
+.subscription-row p,
+.ledger-row p,
+.planner-history-row p {
+  margin: 0.35rem 0 0;
+  color: var(--text-muted);
+  line-height: 1.55;
 }
 
-.format-buttons {
+.planner-pricing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  justify-content: flex-end;
+}
+
+.planner-pricing-strip,
+.feature-tags,
+.tag-row,
+.planner-history-values,
+.planner-confirm-summary {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
 }
 
-.format-btn {
-  flex: 1;
-  min-width: 80px;
-  padding: 0.75rem;
-  border: 2px solid #e2e8f0;
-  background: white;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-weight: 600;
+.planner-pricing-strip {
+  margin-top: 0.95rem;
 }
 
-.format-btn:hover {
-  border-color: #667eea;
+.planner-admin-grid {
+  margin-top: 1.1rem;
 }
 
-.format-btn.active {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-color: transparent;
-  color: white;
-}
-
-.checkbox-group {
+.planner-admin-column,
+.planner-history-list,
+.plan-list,
+.list-wrap,
+.ledger-list {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.95rem;
 }
 
-.checkbox-group label {
-  display: flex;
+.planner-warning-box {
+  margin-top: 0.85rem;
+}
+
+.planner-pricing-form {
+  display: grid;
+  gap: 0.95rem;
+}
+
+.planner-history-panel {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.compact-head {
+  margin-bottom: 0;
+}
+
+.planner-history-row,
+.plan-card,
+.subscription-row,
+.ledger-row {
+  padding: 0.95rem 1rem;
+  border: 1px solid var(--stroke);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #fbfdff, #f6faff);
+}
+
+.compact-row {
+  padding: 0.82rem 0.9rem;
+}
+
+.status-pill,
+.tag,
+.feature-tag,
+.delta-pill {
+  display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
+  border-radius: 999px;
+  padding: 0.28rem 0.62rem;
+  font-size: 0.75rem;
+  font-weight: 700;
 }
 
-.checkbox-group input[type="checkbox"] {
-  cursor: pointer;
+.status-pill.active,
+.delta-pill.positive {
+  background: #ecfdf5;
+  color: #166534;
 }
 
-.date-inputs {
+.status-pill.inactive {
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.status-pill.pending_activation,
+.tag.request {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.delta-pill.negative {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.feature-tag {
+  background: #ecfeff;
+  color: #0f766e;
+}
+
+.tag {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.tag.muted {
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.field {
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
+  flex-direction: column;
+  gap: 0.38rem;
 }
 
-.date-inputs .input {
-  flex: 1;
+.field span {
+  color: #475569;
+  font-size: 0.79rem;
+  font-weight: 700;
 }
 
-.export-email {
-  margin-bottom: 1.5rem;
+.field input,
+.field select {
+  width: 100%;
+  border: 1px solid var(--stroke);
+  border-radius: 13px;
+  background: var(--surface-muted);
+  padding: 0.82rem 0.88rem;
+  font: inherit;
+  color: var(--text);
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 
-.export-actions {
-  display: flex;
-  gap: 1rem;
+.field input:focus,
+.field select:focus {
+  outline: none;
+  border-color: #7dd3fc;
+  box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.14);
+  background: #fff;
+}
+
+.scroll-list,
+.compact-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.6) transparent;
+}
+
+.scroll-list::-webkit-scrollbar,
+.compact-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scroll-list::-webkit-scrollbar-thumb,
+.compact-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.55);
+  border-radius: 999px;
+}
+
+.scroll-list {
+  max-height: 34rem;
+  overflow: auto;
+  padding-right: 0.25rem;
+}
+
+.compact-scroll {
+  max-height: 28rem;
+  overflow: auto;
+}
+
+.field.toggle {
   justify-content: flex-end;
-  margin-bottom: 1.5rem;
+  gap: 0.6rem;
 }
 
-.export-schedule {
-  margin-top: 2rem;
+.field.toggle input {
+  width: auto;
 }
 
-.scheduled-list {
+.control-form {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.control-form.standalone {
+  margin-bottom: 0;
+}
+
+.right-stack {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
+  align-items: flex-end;
+  gap: 0.28rem;
 }
 
-.scheduled-item {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 1.5rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.events-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--stroke);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
 }
 
-.scheduled-name {
-  margin: 0;
-  font-weight: 600;
-  color: #1a202c;
+.events-table {
+  width: 100%;
+  border-collapse: collapse;
 }
 
-.scheduled-recipients,
-.scheduled-next {
-  margin: 0.25rem 0;
-  font-size: 0.9rem;
-  color: #718096;
+.events-table th,
+.events-table td {
+  padding: 0.8rem 0.7rem;
+  border-bottom: 1px solid #edf2f7;
+  text-align: left;
+  vertical-align: top;
 }
 
-/* Modal */
-.modal-overlay {
-  position: fixed;
+.compact-table th,
+.compact-table td {
+  padding: 0.65rem 0.58rem;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.events-table th {
+  position: sticky;
   top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: #f8fbff;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+}
+
+.empty-inline {
+  text-align: center;
+  color: #94a3b8;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
-  padding: 2rem;
-}
-
-.modal-content {
-  background: white;
-  border-radius: 12px;
-  max-width: 500px;
-  width: 100%;
-  max-height: 90vh;
-  overflow-y: auto;
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   padding: 1.5rem;
-  border-bottom: 1px solid #e2e8f0;
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(4px);
 }
 
-.modal-header h2 {
-  margin: 0;
-  font-size: 1.5rem;
-  color: #1a202c;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 1.5rem;
-  cursor: pointer;
-  color: #718096;
-}
-
-.close-btn:hover {
-  color: #2d3748;
-}
-
-.modal-body {
-  padding: 1.5rem;
-}
-
-.detail-grid {
+.modal-card {
+  width: min(560px, 100%);
+  padding: 1.25rem;
+  border-radius: 22px;
+  border: 1px solid rgba(214, 223, 234, 0.9);
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1.5rem;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin-bottom: 1.5rem;
-}
-
-.form-group label {
-  font-weight: 600;
-  color: #2d3748;
-}
-
-.textarea {
-  padding: 0.75rem;
-  border: 2px solid #e2e8f0;
-  border-radius: 8px;
-  font-family: inherit;
-  font-size: 0.95rem;
-  resize: vertical;
-}
-
-.form-actions {
-  display: flex;
   gap: 1rem;
-  justify-content: flex-end;
 }
 
-.modal-footer {
-  padding: 1.5rem;
-  border-top: 1px solid #e2e8f0;
-  background: #f7fafc;
-}
-
-.empty-state {
-  text-align: center;
-  padding: 3rem 2rem;
-  background: white;
-  border-radius: 12px;
-  border: 1px solid #e2e8f0;
-  color: #718096;
-}
-
-.success-message {
-  padding: 1rem;
-  background: #dcfce7;
-  border-left: 3px solid #22c55e;
-  color: #166534;
-  border-radius: 6px;
-  margin-bottom: 1rem;
-}
-
-.error-message {
-  padding: 1rem;
-  background: #fee2e2;
-  border-left: 3px solid #ef4444;
-  color: #991b1b;
-  border-radius: 6px;
-  margin-bottom: 1rem;
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-  .tabs {
-    flex-direction: column;
-    border-bottom: none;
+@media (max-width: 1400px) {
+  .grid.two-col,
+  .planner-admin-grid,
+  .control-grid {
+    grid-template-columns: 1fr;
   }
 
-  .tab {
-    border-bottom: none;
-    border-left: 3px solid transparent;
-    padding-left: 1rem;
+  .metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .tab.active {
-    border-left-color: #667eea;
-    border-bottom: none;
+  .metric-card.wide {
+    grid-column: span 2;
+  }
+
+  .planner-pricing-grid,
+  .plan-edit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tab-button {
+    flex: 1 1 180px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .planner-pricing-grid,
+  .plan-edit-grid {
+    grid-template-columns: 1fr;
   }
 
   .metrics-grid {
     grid-template-columns: 1fr;
   }
 
-  .charts-section {
+  .metric-card.wide {
+    grid-column: auto;
+  }
+
+  .planner-metrics-grid {
     grid-template-columns: 1fr;
   }
 
-  .transaction-controls {
+  .panel-head.with-meta {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 720px) {
+  .admin-financial {
+    gap: 1rem;
+  }
+
+  .page-header,
+  .header-actions,
+  .panel-head,
+  .panel-meta-row,
+  .planner-pricing-head,
+  .planner-history-row,
+  .plan-top,
+  .subscription-row,
+  .ledger-row,
+  .row-actions,
+  .modal-actions {
     flex-direction: column;
   }
 
-  .filter-input {
+  .page-header,
+  .panel,
+  .surface-card,
+  .control-card,
+  .metric-card {
+    border-radius: 18px;
+  }
+
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tab-bar {
+    padding: 0.55rem;
+    gap: 0.55rem;
+  }
+
+  .tab-button {
+    min-width: 0;
     width: 100%;
   }
 
-  .table-header,
-  .table-row {
-    grid-template-columns: repeat(4, 1fr);
-  }
-
-  .col {
-    padding: 0.75rem 0.5rem;
-  }
-
-  .commissions-list,
-  .payouts-grid,
-  .report-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .commission-rules {
-    grid-template-columns: 1fr;
-  }
-
-  .export-options {
-    grid-template-columns: 1fr;
-  }
-
-  .detail-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .history-content {
-    flex-direction: column;
+  .header-actions,
+  .right-stack {
     align-items: flex-start;
   }
 
-  .history-details {
-    width: 100%;
-    flex-direction: column;
-    gap: 0.5rem;
+  .planner-history-values,
+  .planner-pricing-actions {
+    justify-content: flex-start;
+  }
+
+  .events-table th,
+  .events-table td {
+    padding: 0.72rem 0.58rem;
   }
 }
 </style>

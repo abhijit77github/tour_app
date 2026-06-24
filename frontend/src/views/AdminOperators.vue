@@ -19,7 +19,7 @@
       </div>
 
       <div class="filter-controls">
-        <select v-model="ratingFilter" class="filter-select">
+          <select v-model="ratingFilter" @change="handleFilterChange" class="filter-select">
           <option value="">All Ratings</option>
           <option value="4">⭐ 4.0+</option>
           <option value="3">⭐ 3.0+</option>
@@ -28,7 +28,7 @@
       </div>
 
       <div class="pagination-info">
-        Showing {{ currentPage * pageSize - pageSize + 1 }} to {{ Math.min(currentPage * pageSize, totalOperators) }} of {{ totalOperators }}
+          Showing {{ pageStart }} to {{ pageEnd }} of {{ totalOperators }}
       </div>
     </div>
 
@@ -39,7 +39,7 @@
     </div>
 
     <!-- Empty State -->
-    <div v-else-if="filteredOperators.length === 0" class="empty-state">
+    <div v-else-if="operators.length === 0" class="empty-state">
       <p>📭 No operators found</p>
       <span v-if="searchQuery" class="hint">Try adjusting your search criteria</span>
     </div>
@@ -60,7 +60,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="operator in paginatedOperators" :key="operator._id" class="operator-row">
+          <tr v-for="operator in operators" :key="operator._id" class="operator-row">
             <td class="business-cell">{{ operator.profile?.business_name || 'N/A' }}</td>
             <td class="owner-cell">{{ operator.full_name }}</td>
             <td class="areas-cell">
@@ -119,26 +119,19 @@
     <div v-if="totalOperators > 0" class="pagination">
       <button
         @click="previousPage"
-        :disabled="currentPage === 1"
+        :disabled="currentPage === 1 || loading"
         class="pagination-btn"
       >
         ← Previous
       </button>
 
       <div class="page-numbers">
-        <button
-          v-for="page in visiblePages"
-          :key="page"
-          @click="goToPage(page)"
-          :class="['page-number', { active: currentPage === page }]"
-        >
-          {{ page }}
-        </button>
+        <span :class="['page-number', 'active']">{{ currentPage }}</span>
       </div>
 
       <button
         @click="nextPage"
-        :disabled="currentPage >= totalPages"
+        :disabled="!pagination.hasMore || loading"
         class="pagination-btn"
       >
         Next →
@@ -294,6 +287,9 @@ const searchQuery = ref('')
 const ratingFilter = ref('')
 const currentPage = ref(1)
 const pageSize = 10
+const totalOperators = ref(0)
+const pagination = ref({ totalPages: 1, hasMore: false })
+const pageCursors = ref([null])
 const selectedOperator = ref(null)
 const showModal = ref(false)
 const showPerformanceModal = ref(false)
@@ -303,62 +299,35 @@ const confirmMessage = ref('')
 const confirmButtonText = ref('')
 let confirmCallback = null
 
-const totalOperators = computed(() => operators.value.length)
-const totalPages = computed(() => Math.ceil(filteredOperators.value.length / pageSize))
-
-const filteredOperators = computed(() => {
-  let filtered = operators.value
-
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    filtered = filtered.filter(o =>
-      (o.profile?.business_name || '').toLowerCase().includes(query) ||
-      o.full_name.toLowerCase().includes(query) ||
-      o.email.toLowerCase().includes(query)
-    )
-  }
-
-  if (ratingFilter.value === '4') {
-    filtered = filtered.filter(o => (o.avg_rating || 0) >= 4)
-  } else if (ratingFilter.value === '3') {
-    filtered = filtered.filter(o => (o.avg_rating || 0) >= 3 && (o.avg_rating || 0) < 4)
-  } else if (ratingFilter.value === 'below3') {
-    filtered = filtered.filter(o => (o.avg_rating || 0) < 3)
-  }
-
-  return filtered
-})
-
-const paginatedOperators = computed(() => {
-  const start = (currentPage.value - 1) * pageSize
-  const end = start + pageSize
-  return filteredOperators.value.slice(start, end)
-})
-
-const visiblePages = computed(() => {
-  const pages = []
-  const maxPages = 5
-  let startPage = Math.max(1, currentPage.value - Math.floor(maxPages / 2))
-  let endPage = Math.min(totalPages.value, startPage + maxPages - 1)
-
-  if (endPage - startPage + 1 < maxPages) {
-    startPage = Math.max(1, endPage - maxPages + 1)
-  }
-
-  for (let i = startPage; i <= endPage; i++) {
-    pages.push(i)
-  }
-  return pages
-})
+const totalPages = computed(() => pagination.value.totalPages || Math.max(1, Math.ceil(totalOperators.value / pageSize)))
+const pageStart = computed(() => (totalOperators.value === 0 ? 0 : (currentPage.value - 1) * pageSize + 1))
+const pageEnd = computed(() => (totalOperators.value === 0 ? 0 : Math.min(currentPage.value * pageSize, totalOperators.value)))
 
 const fetchOperators = async () => {
   try {
     loading.value = true
     const token = localStorage.getItem('adminToken')
-    const response = await api.get('/admin/operators?skip=0&limit=1000', {
+    const cursor = pageCursors.value[currentPage.value - 1] || null
+    const response = await api.get('/admin/operators', {
+      params: {
+        limit: pageSize,
+        cursor,
+        search: searchQuery.value.trim(),
+        rating_filter: ratingFilter.value || undefined
+      },
       headers: { Authorization: `Bearer ${token}` }
     })
     operators.value = response.data.operators || []
+    totalOperators.value = response.data.total || 0
+    const responsePagination = response.data.pagination || {}
+    pagination.value = {
+      totalPages: responsePagination.total_pages || Math.max(1, Math.ceil(totalOperators.value / pageSize)),
+      hasMore: Boolean(responsePagination.has_more)
+    }
+    pageCursors.value = pageCursors.value.slice(0, currentPage.value)
+    if (responsePagination.next_cursor) {
+      pageCursors.value[currentPage.value] = responsePagination.next_cursor
+    }
   } catch (error) {
     console.error('Error fetching operators:', error)
   } finally {
@@ -366,8 +335,20 @@ const fetchOperators = async () => {
   }
 }
 
-const handleSearch = () => {
+const resetPagination = () => {
   currentPage.value = 1
+  pageCursors.value = [null]
+  pagination.value = { totalPages: 1, hasMore: false }
+}
+
+const handleSearch = () => {
+  resetPagination()
+  fetchOperators()
+}
+
+const handleFilterChange = () => {
+  resetPagination()
+  fetchOperators()
 }
 
 const viewOperator = (operator) => {
@@ -397,7 +378,7 @@ const suspendOperator = (operator) => {
       await api.post(`/admin/users/${operator._id}/suspend`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       })
-      operator.is_active = false
+      await fetchOperators()
       showConfirmDialog.value = false
     } catch (error) {
       console.error('Error suspending operator:', error)
@@ -415,7 +396,7 @@ const activateOperator = (operator) => {
       await api.post(`/admin/users/${operator._id}/activate`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       })
-      operator.is_active = true
+      await fetchOperators()
       showConfirmDialog.value = false
     } catch (error) {
       console.error('Error activating operator:', error)
@@ -446,15 +427,17 @@ const closePerformanceModal = () => {
 }
 
 const previousPage = () => {
-  if (currentPage.value > 1) currentPage.value--
+  if (currentPage.value > 1) {
+    currentPage.value--
+    fetchOperators()
+  }
 }
 
 const nextPage = () => {
-  if (currentPage.value < totalPages.value) currentPage.value++
-}
-
-const goToPage = (page) => {
-  currentPage.value = page
+  if (pagination.value.hasMore) {
+    currentPage.value++
+    fetchOperators()
+  }
 }
 
 onMounted(() => {

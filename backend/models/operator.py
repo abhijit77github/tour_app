@@ -29,6 +29,19 @@ class ServingArea(BaseModel):
     coordinates: Optional[LocationCoordinates] = None
 
 
+class CarServiceOption(BaseModel):
+    vehicle_type: str  # e.g., Sedan, SUV, Hatchback, Tempo Traveler
+    vehicle_label: Optional[str] = None
+    seats: int
+    luggage_capacity: Optional[int] = None
+    pricing_model: str = "per_day"  # per_km, per_day, fixed_transfer
+    base_fare: Optional[float] = None
+    fare_per_km: Optional[float] = None
+    operating_hours: Optional[str] = None
+    amenities: List[str] = []
+    coverage_areas: List[str] = []
+
+
 class OperatorProfile(BaseModel):
     id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
     user_id: str  # Reference to User
@@ -40,6 +53,8 @@ class OperatorProfile(BaseModel):
     alternate_contact: Optional[str] = None
     years_of_experience: Optional[int] = None
     specializations: List[str] = []  # e.g., ["Adventure", "Family Tours", "Budget Travel"]
+    service_types: List[str] = ["tour"]  # tour, car
+    car_services: List[CarServiceOption] = []
     average_rating: float = 0.0
     total_reviews: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -58,6 +73,8 @@ class OperatorProfileCreate(BaseModel):
     alternate_contact: Optional[str] = None
     years_of_experience: Optional[int] = None
     specializations: List[str] = []
+    service_types: List[str] = ["tour"]
+    car_services: List[CarServiceOption] = []
 
 
 class OperatorProfileUpdate(BaseModel):
@@ -67,3 +84,5 @@ class OperatorProfileUpdate(BaseModel):
     alternate_contact: Optional[str] = None
     years_of_experience: Optional[int] = None
     specializations: Optional[List[str]] = None
+    service_types: Optional[List[str]] = None
+    car_services: Optional[List[CarServiceOption]] = None

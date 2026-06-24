@@ -9,6 +9,10 @@ terraform {
       source  = "hashicorp/helm"
       version = "~> 2.11"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 }
 
@@ -66,4 +70,5 @@ locals {
   
   mongodb_host = "mongodb"
   mongodb_port = 27017
+  frontend_origin = var.frontend_url_override != "" ? var.frontend_url_override : "http://${var.domain_name}"
 }

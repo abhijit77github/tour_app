@@ -2,13 +2,22 @@
   <div class="home">
     <section class="hero">
       <div class="container">
-        <p class="hero-kicker">Plan better trips with local experts</p>
-        <h1>Find the Right Tour, Not Just Any Tour</h1>
-        <p class="hero-subtitle">Discover operator-led experiences with real location depth, pricing clarity, and trusted reviews.</p>
-        <div class="hero-actions">
-          <router-link to="/search" class="btn btn-primary btn-large">Search Tours</router-link>
-          <router-link to="/register" class="btn btn-large hero-register-btn">Become an Operator</router-link>
+        <div class="hero-layout">
+          <div class="hero-copy">
+            <p class="hero-kicker">Plan better trips with local experts</p>
+            <h1>Find the Right Tour, Not Just Any Tour</h1>
+            <p class="hero-subtitle">Discover operator-led experiences with real location depth, pricing clarity, and trusted reviews.</p>
+            <div class="hero-actions">
+              <router-link to="/search" class="btn btn-primary btn-large">Search Tours</router-link>
+              <router-link to="/register" class="btn btn-large hero-register-btn">Become an Operator</router-link>
+            </div>
+          </div>
+
+          <div class="hero-art" aria-hidden="true">
+            <img :src="heroIllustration" alt="" class="hero-illustration" />
+          </div>
         </div>
+
         <div class="hero-metrics">
           <div class="metric-item">
             <strong>150+</strong>
@@ -57,8 +66,15 @@
 </template>
 
 <script>
+import heroIllustration from '../../resources/logo/svg/undraw_adventure-map_tour-local.svg'
+
 export default {
-  name: 'Home'
+  name: 'Home',
+  data() {
+    return {
+      heroIllustration
+    }
+  }
 }
 </script>
 
@@ -73,6 +89,41 @@ export default {
   text-align: center;
   position: relative;
   overflow: hidden;
+}
+
+.hero-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 460px);
+  gap: 2rem;
+  align-items: center;
+}
+
+.hero-copy {
+  text-align: left;
+}
+
+.hero-art {
+  position: relative;
+  padding: 0.4rem;
+  border-radius: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.hero-art::before {
+  content: none;
+}
+
+.hero-illustration {
+  width: 100%;
+  height: auto;
+  display: block;
+  position: relative;
+  z-index: 1;
+  border-radius: 26px;
+  border: 0;
+  background: linear-gradient(180deg, #eff6ff 0%, #ecfeff 100%);
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.12);
 }
 
 .hero-kicker {
@@ -94,15 +145,14 @@ export default {
 
 .hero-subtitle {
   font-size: clamp(1rem, 2.2vw, 1.2rem);
-  max-width: 760px;
-  margin: 0 auto 2rem;
+  max-width: 640px;
+  margin: 0 0 2rem;
   color: rgba(240, 249, 255, 0.92);
 }
 
 .hero-actions {
   display: flex;
   gap: 1rem;
-  justify-content: center;
   flex-wrap: wrap;
 }
 
@@ -129,7 +179,7 @@ export default {
   display: grid;
   grid-template-columns: repeat(3, minmax(130px, 180px));
   gap: 0.75rem;
-  justify-content: center;
+  justify-content: start;
 }
 
 .metric-item {
@@ -202,6 +252,25 @@ export default {
 @media (max-width: 760px) {
   .hero {
     padding: 4.4rem 0 3.6rem;
+  }
+
+  .hero-layout {
+    grid-template-columns: 1fr;
+    gap: 1.4rem;
+  }
+
+  .hero-copy {
+    text-align: center;
+  }
+
+  .hero-subtitle {
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .hero-actions,
+  .hero-metrics {
+    justify-content: center;
   }
 
   .hero-metrics {

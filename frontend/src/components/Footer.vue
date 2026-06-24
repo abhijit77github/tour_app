@@ -1,15 +1,22 @@
 <template>
   <footer class="footer">
     <div class="container">
-      <p>&copy; 2026 Tour App. All rights reserved.</p>
-      <p>Find your perfect tour with local operators</p>
+      <p>&copy; 2026 {{ adminBrand.appName }}. All rights reserved.</p>
+      <p>{{ adminBrand.footerTagline }}</p>
     </div>
   </footer>
 </template>
 
 <script>
+import { adminBrandConfig } from '../config/adminBrand'
+
 export default {
-  name: 'Footer'
+  name: 'Footer',
+  setup() {
+    return {
+      adminBrand: adminBrandConfig,
+    }
+  }
 }
 </script>
 

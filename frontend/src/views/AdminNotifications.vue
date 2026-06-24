@@ -25,6 +25,12 @@
       >
         📄 Message Templates
       </button>
+      <button
+        @click="activeTab = 'alerts'"
+        :class="['tab', { active: activeTab === 'alerts' }]"
+      >
+        🚨 Alert Feed
+      </button>
     </div>
 
     <!-- Compose Tab -->
@@ -83,13 +89,25 @@
             </div>
 
             <p class="recipient-count">
-              📊 Estimated {{ estimatedRecipients }} recipient(s)
+              📊 {{ previewLoading ? 'Estimating recipients…' : `Estimated ${estimatedRecipients} recipient(s)` }}
+            </p>
+            <p v-if="audiencePreview.breakdown" class="recipient-breakdown">
+              Tourists {{ audiencePreview.breakdown.tourists || 0 }} · Operators {{ audiencePreview.breakdown.operators || 0 }}
             </p>
           </div>
 
           <!-- Message Content -->
           <div class="form-section">
             <h3>Message</h3>
+
+            <div class="form-group">
+              <label for="message-type">Message Type</label>
+              <select id="message-type" v-model="notification.type" class="input">
+                <option value="notification">Notification</option>
+                <option value="announcement">Announcement</option>
+                <option value="alert">Alert</option>
+              </select>
+            </div>
 
             <div class="form-group">
               <label for="subject">Subject</label>
@@ -169,7 +187,7 @@
               Clear
             </button>
             <button type="submit" :disabled="sendingLoading" class="btn btn-primary">
-              {{ sendingLoading ? 'Sending...' : '📨 Send Message' }}
+              {{ sendingLoading ? 'Saving...' : notification.sendNow ? '📨 Send Message' : '🗓️ Schedule Message' }}
             </button>
           </div>
 
@@ -197,7 +215,7 @@
         </select>
       </div>
 
-      <div v-if="communicationHistory.length === 0" class="empty-state">
+      <div v-if="!filteredHistory.length" class="empty-state">
         <p>📭 No communication history</p>
       </div>
 
@@ -239,6 +257,9 @@
         </button>
       </div>
 
+      <div v-if="templateError" class="error-message">{{ templateError }}</div>
+      <div v-if="templateSuccess" class="success-message">{{ templateSuccess }}</div>
+
       <div v-if="templates.length === 0" class="empty-state">
         <p>📭 No templates yet</p>
       </div>
@@ -265,6 +286,111 @@
             </button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <div v-else-if="activeTab === 'alerts'" class="tab-content">
+      <div class="alerts-toolbar">
+        <div class="alerts-summary-card">
+          <strong>{{ notificationSummary?.admin_alerts?.unread_count || 0 }}</strong>
+          <span>Unread alerts</span>
+        </div>
+        <div class="alerts-summary-card">
+          <strong>{{ notificationSummary?.totals?.scheduled || 0 }}</strong>
+          <span>Scheduled campaigns</span>
+        </div>
+        <div class="alerts-summary-card">
+          <strong>{{ notificationSummary?.totals?.failed || 0 }}</strong>
+          <span>Failed campaigns</span>
+        </div>
+        <div class="alerts-actions">
+          <button class="btn btn-secondary" type="button" @click="markAllAlertsRead">Mark all read</button>
+          <button class="btn btn-primary" type="button" @click="runWorkerNow" :disabled="opsLoading">{{ opsLoading ? 'Running…' : 'Run worker now' }}</button>
+        </div>
+      </div>
+
+      <div class="ops-grid">
+        <section class="ops-panel">
+          <div class="ops-head">
+            <h3>Admin alerts</h3>
+            <span class="muted-copy">Unread badge is sourced from this feed.</span>
+          </div>
+          <div v-if="!adminAlerts.length" class="empty-state compact-empty">
+            <p>📭 No alerts yet</p>
+          </div>
+          <article v-for="alert in adminAlerts" :key="alert._id" class="alert-card" :class="`severity-${alert.severity}`">
+            <div class="alert-top">
+              <div>
+                <strong>{{ alert.title }}</strong>
+                <p>{{ alert.message }}</p>
+              </div>
+              <span class="alert-severity">{{ alert.severity_label }}</span>
+            </div>
+            <div class="alert-meta">
+              <span>{{ formatDate(alert.created_at) }}</span>
+              <span>{{ alert.category }}</span>
+              <span>{{ alert.service }}</span>
+            </div>
+            <button v-if="!alert.read" class="inline-action" type="button" @click="markAlertRead(alert._id)">Mark read</button>
+          </article>
+        </section>
+
+        <section class="ops-panel">
+          <div class="ops-head">
+            <h3>Worker runs</h3>
+            <span class="muted-copy">Background execution and manual triggers.</span>
+          </div>
+          <div v-if="!workerRuns.length" class="empty-state compact-empty">
+            <p>🛠️ No worker runs yet</p>
+          </div>
+          <article v-for="run in workerRuns" :key="run._id" class="worker-run-card">
+            <div class="alert-top">
+              <strong>{{ run.status }}</strong>
+              <span class="worker-pill">{{ run.worker_id }}</span>
+            </div>
+            <div class="alert-meta">
+              <span>Claimed {{ run.claimed_campaigns }}</span>
+              <span>Processed {{ run.processed_campaigns }}</span>
+              <span>Failed {{ run.failed_campaigns }}</span>
+            </div>
+            <p class="worker-timestamp">{{ formatDate(run.started_at) }} → {{ formatDate(run.finished_at) }}</p>
+            <p v-if="run.last_error" class="error-message compact-error">{{ run.last_error }}</p>
+          </article>
+        </section>
+
+        <section class="ops-panel full-span">
+          <div class="ops-head">
+            <h3>Recent delivery attempts</h3>
+            <span class="muted-copy">Per-user adapter outcomes for admin visibility.</span>
+          </div>
+          <div v-if="!deliveryAttempts.length" class="empty-state compact-empty">
+            <p>📬 No delivery attempts yet</p>
+          </div>
+          <div v-else class="delivery-table-wrap">
+            <table class="delivery-table">
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>User</th>
+                  <th>Channel</th>
+                  <th>Campaign</th>
+                  <th>Reason</th>
+                  <th>Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="attempt in deliveryAttempts" :key="attempt._id">
+                  <td>{{ attempt.status }}</td>
+                  <td>{{ attempt.user_id }}</td>
+                  <td>{{ attempt.channel }}</td>
+                  <td>{{ attempt.campaign_id }}</td>
+                  <td>{{ attempt.failure_reason || 'OK' }}</td>
+                  <td>{{ formatDate(attempt.created_at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
     </div>
 
@@ -341,11 +467,11 @@
     </div>
 
     <!-- Create/Edit Template Modal -->
-    <div v-if="showCreateTemplate" class="modal-overlay" @click.self="showCreateTemplate = false">
+    <div v-if="showCreateTemplate" class="modal-overlay" @click.self="closeTemplateModal">
       <div class="modal-content">
         <div class="modal-header">
           <h2>{{ editingTemplate ? 'Edit Template' : 'Create New Template' }}</h2>
-          <button @click="showCreateTemplate = false" class="close-btn">✕</button>
+          <button @click="closeTemplateModal" class="close-btn">✕</button>
         </div>
 
         <form @submit.prevent="saveTemplate" class="modal-body">
@@ -397,7 +523,7 @@
           </div>
 
           <div class="form-actions">
-            <button type="button" @click="showCreateTemplate = false" class="btn btn-secondary">
+            <button type="button" @click="closeTemplateModal" class="btn btn-secondary">
               Cancel
             </button>
             <button type="submit" class="btn btn-primary">
@@ -411,105 +537,55 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import api from '../services/api'
 
+const route = useRoute()
+const router = useRouter()
 const activeTab = ref('compose')
 const sendingLoading = ref(false)
 const sendError = ref('')
 const sendSuccess = ref('')
+const templateError = ref('')
+const templateSuccess = ref('')
+const previewLoading = ref(false)
+const opsLoading = ref(false)
 
-// Compose Form
 const recipientType = ref('tourists')
 const recipientFilter = ref({
   status: false,
-  lastDays: null
+  lastDays: null,
 })
 
 const notification = ref({
+  type: 'notification',
   subject: '',
   message: '',
   sendNow: true,
   scheduledDate: '',
-  scheduledTime: ''
+  scheduledTime: '',
+  templateId: '',
 })
 
-// History
 const historyFilter = ref({
   type: '',
-  status: ''
+  status: '',
 })
 
 const showHistoryModal = ref(false)
 const selectedHistory = ref(null)
 
-const communicationHistory = ref([
-  {
-    _id: '1',
-    type: 'notification',
-    type_label: '🔔 Notification',
-    subject: 'New Quote Request Available',
-    message: 'A new quote request has been posted in your serving area.',
-    recipient_count: 45,
-    status: 'sent',
-    status_label: '✓ Sent',
-    sent_at: new Date('2024-01-20'),
-    delivery_stats: { delivered: 45, opened: 32, clicked: 15, failed: 0 }
-  },
-  {
-    _id: '2',
-    type: 'announcement',
-    type_label: '📢 Announcement',
-    subject: 'Platform Maintenance Scheduled',
-    message: 'The platform will undergo maintenance on January 25th.',
-    recipient_count: 250,
-    status: 'sent',
-    status_label: '✓ Sent',
-    sent_at: new Date('2024-01-18'),
-    delivery_stats: { delivered: 248, opened: 180, clicked: 50, failed: 2 }
-  },
-  {
-    _id: '3',
-    type: 'alert',
-    type_label: '⚠️ Alert',
-    subject: 'Suspicious Activity Detected',
-    message: 'Unusual activity detected on your account.',
-    recipient_count: 1,
-    status: 'scheduled',
-    status_label: '⏳ Scheduled',
-    scheduled_for: new Date('2024-01-25'),
-    delivery_stats: null
-  }
-])
-
-const templates = ref([
-  {
-    _id: '1',
-    name: 'Welcome New Operator',
-    category: 'Welcome',
-    subject: 'Welcome to Tour App!',
-    message: 'Welcome to the Tour App platform. We are excited to have you onboard...'
-  },
-  {
-    _id: '2',
-    name: 'Low Rating Alert',
-    category: 'Alert',
-    subject: 'Your Rating Has Changed',
-    message: 'Your platform rating has been updated. Check your profile for details...'
-  },
-  {
-    _id: '3',
-    name: 'Weekly Newsletter',
-    category: 'Announcement',
-    subject: 'This Week\'s Opportunities',
-    message: 'Here are the top opportunities for this week from your area...'
-  }
-])
-
-const quickTemplates = [
-  { id: 1, name: 'Welcome', icon: '👋' },
-  { id: 2, name: 'Alert', icon: '⚠️' },
-  { id: 3, name: 'Update', icon: '📢' }
-]
+const communicationHistory = ref([])
+const templates = ref([])
+const adminAlerts = ref([])
+const workerRuns = ref([])
+const deliveryAttempts = ref([])
+const notificationSummary = ref({ admin_alerts: { unread_count: 0 }, totals: {} })
+const audiencePreview = ref({
+  estimated_recipients: 0,
+  breakdown: { tourists: 0, operators: 0 },
+})
 
 const showCreateTemplate = ref(false)
 const editingTemplate = ref(null)
@@ -517,39 +593,150 @@ const templateForm = ref({
   name: '',
   category: '',
   subject: '',
-  message: ''
+  message: '',
 })
 
-const estimatedRecipients = computed(() => {
-  let count = 0
-  if (recipientType.value === 'tourists') count = 150
-  else if (recipientType.value === 'operators') count = 75
-  else count = 225
-  return count
-})
+const iconForTemplate = (template) => {
+  const category = (template.category || '').toLowerCase()
+  if (category.includes('welcome')) return '👋'
+  if (category.includes('alert')) return '⚠️'
+  if (category.includes('announcement')) return '📢'
+  return '✉️'
+}
+
+const quickTemplates = computed(() =>
+  templates.value.slice(0, 3).map(template => ({
+    ...template,
+    id: template._id,
+    icon: iconForTemplate(template),
+  }))
+)
+
+const estimatedRecipients = computed(() => audiencePreview.value?.estimated_recipients || 0)
 
 const filteredHistory = computed(() => {
   let filtered = communicationHistory.value
 
   if (historyFilter.value.type) {
-    filtered = filtered.filter(h => h.type === historyFilter.value.type)
+    filtered = filtered.filter(item => item.type === historyFilter.value.type)
   }
 
   if (historyFilter.value.status) {
-    filtered = filtered.filter(h => h.status === historyFilter.value.status)
+    filtered = filtered.filter(item => item.status === historyFilter.value.status)
   }
 
   return filtered
 })
 
+const normalizeRecipientFilter = () => ({
+  active_only: Boolean(recipientFilter.value.status),
+  last_active_days: recipientFilter.value.lastDays ? Number(recipientFilter.value.lastDays) : null,
+})
+
 const formatDate = (date) => {
   if (!date) return 'N/A'
-  return new Date(date).toLocaleDateString('en-IN')
+  return new Date(date).toLocaleString('en-IN', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+const clearComposeFeedback = () => {
+  sendError.value = ''
+  sendSuccess.value = ''
+}
+
+const clearTemplateFeedback = () => {
+  templateError.value = ''
+  templateSuccess.value = ''
+}
+
+const loadNotificationData = async () => {
+  try {
+    const [templatesRes, campaignsRes, alertsRes, deliveriesRes, workerRunsRes, summaryRes] = await Promise.all([
+      api.get('/admin/notifications/templates'),
+      api.get('/admin/notifications/campaigns'),
+      api.get('/admin/notifications/alerts'),
+      api.get('/admin/notifications/deliveries'),
+      api.get('/admin/notifications/worker-runs'),
+      api.get('/admin/notifications/summary'),
+    ])
+    templates.value = templatesRes.data.templates || []
+    communicationHistory.value = campaignsRes.data.campaigns || []
+    adminAlerts.value = alertsRes.data.alerts || []
+    deliveryAttempts.value = deliveriesRes.data.attempts || []
+    workerRuns.value = workerRunsRes.data.runs || []
+    notificationSummary.value = summaryRes.data || { admin_alerts: { unread_count: 0 }, totals: {} }
+  } catch (error) {
+    console.error('Failed to load notification data:', error)
+    sendError.value = error.response?.data?.detail || 'Failed to load notifications'
+  }
+}
+
+const markAlertRead = async (alertId) => {
+  try {
+    await api.post(`/admin/notifications/alerts/${alertId}/read`)
+    await loadNotificationData()
+  } catch (error) {
+    console.error('Failed to mark alert as read:', error)
+    sendError.value = error.response?.data?.detail || 'Failed to update alert'
+  }
+}
+
+const markAllAlertsRead = async () => {
+  try {
+    await api.post('/admin/notifications/alerts/read-all')
+    await loadNotificationData()
+  } catch (error) {
+    console.error('Failed to mark all alerts as read:', error)
+    sendError.value = error.response?.data?.detail || 'Failed to update alerts'
+  }
+}
+
+const runWorkerNow = async () => {
+  opsLoading.value = true
+  try {
+    const response = await api.post('/admin/notifications/worker-runs/trigger')
+    sendSuccess.value = `Worker completed: processed ${response.data?.result?.processed_campaigns || 0} campaign(s).`
+    await loadNotificationData()
+  } catch (error) {
+    console.error('Failed to trigger notification worker:', error)
+    sendError.value = error.response?.data?.detail || 'Failed to trigger worker'
+  } finally {
+    opsLoading.value = false
+  }
+}
+
+const loadAudiencePreview = async () => {
+  previewLoading.value = true
+  try {
+    const response = await api.post('/admin/notifications/audience-preview', {
+      recipient_type: recipientType.value,
+      recipient_filter: normalizeRecipientFilter(),
+    })
+    audiencePreview.value = response.data || {
+      estimated_recipients: 0,
+      breakdown: { tourists: 0, operators: 0 },
+    }
+  } catch (error) {
+    console.error('Failed to preview audience:', error)
+    sendError.value = error.response?.data?.detail || 'Failed to preview recipients'
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+const buildScheduledAtIso = () => {
+  if (notification.value.sendNow) return null
+  if (!notification.value.scheduledDate || !notification.value.scheduledTime) return null
+  return new Date(`${notification.value.scheduledDate}T${notification.value.scheduledTime}`).toISOString()
 }
 
 const sendNotification = async () => {
-  sendError.value = ''
-  sendSuccess.value = ''
+  clearComposeFeedback()
 
   if (!notification.value.subject.trim()) {
     sendError.value = 'Subject is required'
@@ -573,32 +760,47 @@ const sendNotification = async () => {
 
   try {
     sendingLoading.value = true
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1500))
-    sendSuccess.value = `Message sent successfully to ${estimatedRecipients.value} recipient(s)!`
+    const response = await api.post('/admin/notifications/campaigns', {
+      type: notification.value.type,
+      subject: notification.value.subject,
+      message: notification.value.message,
+      channel: 'in_app',
+      recipient_type: recipientType.value,
+      recipient_filter: normalizeRecipientFilter(),
+      send_now: notification.value.sendNow,
+      scheduled_for: buildScheduledAtIso(),
+      template_id: notification.value.templateId || null,
+    })
+
+    const campaign = response.data.campaign
+    sendSuccess.value = campaign.status === 'scheduled'
+      ? `Campaign scheduled for ${formatDate(campaign.scheduled_for)}.`
+      : `Campaign stored for ${campaign.recipient_count} recipient(s).`
     resetForm()
-    setTimeout(() => {
-      sendSuccess.value = ''
-    }, 3000)
+    await Promise.all([loadNotificationData(), loadAudiencePreview()])
   } catch (error) {
-    sendError.value = 'Failed to send message'
+    console.error('Failed to store campaign:', error)
+    sendError.value = error.response?.data?.detail || 'Failed to store campaign'
   } finally {
     sendingLoading.value = false
   }
 }
 
 const applyTemplate = (template) => {
-  notification.value.subject = template.name
-  notification.value.message = `${template.name} content...`
+  notification.value.subject = template.subject || template.name
+  notification.value.message = template.message || ''
+  notification.value.templateId = template._id || ''
 }
 
 const resetForm = () => {
   notification.value = {
+    type: 'notification',
     subject: '',
     message: '',
     sendNow: true,
     scheduledDate: '',
-    scheduledTime: ''
+    scheduledTime: '',
+    templateId: '',
   }
 }
 
@@ -613,40 +815,91 @@ const closeHistoryModal = () => {
 }
 
 const useTemplate = (template) => {
-  notification.value.subject = template.subject
-  notification.value.message = template.message
+  applyTemplate(template)
   activeTab.value = 'compose'
 }
 
 const editTemplate = (template) => {
+  clearTemplateFeedback()
   editingTemplate.value = template
-  templateForm.value = { ...template }
+  templateForm.value = {
+    name: template.name,
+    category: template.category,
+    subject: template.subject,
+    message: template.message,
+  }
   showCreateTemplate.value = true
 }
 
-const deleteTemplate = (template) => {
-  const index = templates.value.findIndex(t => t._id === template._id)
-  if (index > -1) {
-    templates.value.splice(index, 1)
+const deleteTemplate = async (template) => {
+  clearTemplateFeedback()
+  if (!window.confirm(`Delete template "${template.name}"?`)) return
+
+  try {
+    await api.delete(`/admin/notifications/templates/${template._id}`)
+    templateSuccess.value = 'Template deleted'
+    await loadNotificationData()
+  } catch (error) {
+    console.error('Failed to delete template:', error)
+    templateError.value = error.response?.data?.detail || 'Failed to delete template'
   }
 }
 
-const saveTemplate = () => {
-  if (editingTemplate.value) {
-    const index = templates.value.findIndex(t => t._id === editingTemplate.value._id)
-    if (index > -1) {
-      templates.value[index] = { ...templateForm.value }
-    }
-  } else {
-    templates.value.push({
-      _id: Date.now().toString(),
-      ...templateForm.value
-    })
-  }
+const closeTemplateModal = () => {
   showCreateTemplate.value = false
   editingTemplate.value = null
   templateForm.value = { name: '', category: '', subject: '', message: '' }
 }
+
+const saveTemplate = async () => {
+  clearTemplateFeedback()
+  try {
+    if (editingTemplate.value) {
+      await api.put(`/admin/notifications/templates/${editingTemplate.value._id}`, { ...templateForm.value })
+      templateSuccess.value = 'Template updated'
+    } else {
+      await api.post('/admin/notifications/templates', { ...templateForm.value, channels: ['in_app'], is_active: true })
+      templateSuccess.value = 'Template created'
+    }
+    closeTemplateModal()
+    await loadNotificationData()
+  } catch (error) {
+    console.error('Failed to save template:', error)
+    templateError.value = error.response?.data?.detail || 'Failed to save template'
+  }
+}
+
+watch(
+  [recipientType, () => recipientFilter.value.status, () => recipientFilter.value.lastDays],
+  () => {
+    clearComposeFeedback()
+    loadAudiencePreview()
+  }
+)
+
+watch(
+  () => route.query.tab,
+  (nextTab) => {
+    if (["compose", "history", "templates", "alerts"].includes(nextTab)) {
+      activeTab.value = nextTab
+    }
+  },
+  { immediate: true }
+)
+
+watch(activeTab, (nextTab) => {
+  const query = { ...route.query }
+  if (nextTab === 'compose') {
+    delete query.tab
+  } else {
+    query.tab = nextTab
+  }
+  router.replace({ query })
+})
+
+onMounted(async () => {
+  await Promise.all([loadNotificationData(), loadAudiencePreview()])
+})
 </script>
 
 <style scoped>
@@ -819,6 +1072,12 @@ const saveTemplate = () => {
   margin: 0;
   color: #667eea;
   font-weight: 600;
+}
+
+.recipient-breakdown {
+  margin: 0.35rem 0 0;
+  color: #718096;
+  font-size: 0.88rem;
 }
 
 .form-group {
@@ -1226,6 +1485,152 @@ const saveTemplate = () => {
   background: #fecaca;
 }
 
+.alerts-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  align-items: stretch;
+}
+
+.alerts-summary-card {
+  min-width: 140px;
+  padding: 1rem;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: white;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.alerts-summary-card strong {
+  font-size: 1.35rem;
+  color: #1a202c;
+}
+
+.alerts-summary-card span,
+.muted-copy,
+.worker-timestamp {
+  color: #718096;
+  font-size: 0.85rem;
+}
+
+.alerts-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-left: auto;
+}
+
+.ops-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.ops-panel {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.ops-panel.full-span {
+  grid-column: 1 / -1;
+}
+
+.ops-head,
+.alert-top,
+.alert-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.ops-head h3 {
+  margin: 0;
+  color: #1a202c;
+}
+
+.alert-card,
+.worker-run-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.9rem;
+  background: #f8fafc;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.alert-card p,
+.worker-run-card p {
+  margin: 0;
+  color: #4b5563;
+}
+
+.alert-card.severity-error {
+  border-color: #fecaca;
+  background: #fff5f5;
+}
+
+.alert-card.severity-warning {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.alert-severity,
+.worker-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.inline-action {
+  border: none;
+  padding: 0;
+  background: none;
+  color: #2563eb;
+  font-weight: 700;
+  cursor: pointer;
+  width: fit-content;
+}
+
+.delivery-table-wrap {
+  overflow-x: auto;
+}
+
+.delivery-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.delivery-table th,
+.delivery-table td {
+  padding: 0.75rem 0.5rem;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+}
+
+.delivery-table th {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
+}
+
+.compact-empty,
+.compact-error {
+  margin: 0;
+}
+
 /* Modal */
 .modal-overlay {
   position: fixed;
@@ -1380,6 +1785,16 @@ const saveTemplate = () => {
   }
 
   .type-buttons {
+    flex-direction: column;
+  }
+
+  .alerts-toolbar,
+  .alerts-actions,
+  .ops-grid,
+  .ops-head,
+  .alert-top,
+  .alert-meta {
+    grid-template-columns: 1fr;
     flex-direction: column;
   }
 

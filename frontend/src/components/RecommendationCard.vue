@@ -38,7 +38,7 @@ export default {
 .card {
   background: white;
   border: 1px solid #e2e8f0;
-  border-radius: 16px;
+  border-radius: 14px;
   overflow: hidden;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
   display: flex;
@@ -61,7 +61,7 @@ export default {
 
 .card-image {
   position: relative;
-  height: 180px;
+  height: 148px;
   background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
   overflow: hidden;
   flex-shrink: 0;
@@ -87,13 +87,13 @@ export default {
 
 .badge {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 10px;
+  right: 10px;
   background: linear-gradient(135deg, #fbbf24 0%, #f97316 100%);
   color: white;
-  padding: 0.4rem 0.8rem;
+  padding: 0.32rem 0.68rem;
   border-radius: 999px;
-  font-size: 0.75rem;
+  font-size: 0.68rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -101,11 +101,11 @@ export default {
 }
 
 .card-content {
-  padding: 1.2rem;
+  padding: 0.92rem;
   display: flex;
   flex-direction: column;
   flex: 1;
-  gap: 0.5rem;
+  gap: 0.32rem;
 }
 
 .location {
@@ -119,16 +119,16 @@ export default {
 
 .title {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1rem;
   font-weight: 800;
   color: #0f172a;
-  line-height: 1.3;
+  line-height: 1.25;
 }
 
 .operator {
   margin: 0;
   color: #64748b;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
 }
 
 .rating {
@@ -136,31 +136,31 @@ export default {
   gap: 0.5rem;
   align-items: center;
   margin-top: auto;
-  padding-top: 0.5rem;
+  padding-top: 0.42rem;
   border-top: 1px solid #e2e8f0;
   font-weight: 600;
 }
 
 .stars {
   color: #0f172a;
-  font-size: 0.95rem;
+  font-size: 0.88rem;
 }
 
 .reviews {
   color: #94a3b8;
-  font-size: 0.85rem;
+  font-size: 0.78rem;
 }
 
 .btn {
   display: inline-block;
-  margin-top: 1rem;
+  margin-top: 0.7rem;
   background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
   color: white;
-  padding: 0.65rem 1.2rem;
+  padding: 0.55rem 0.95rem;
   border-radius: 8px;
   text-decoration: none;
   font-weight: 700;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
   text-align: center;
   transition: all 0.3s ease;
   border: none;
@@ -177,11 +177,11 @@ export default {
   }
 
   .card-image {
-    height: 150px;
+    height: 138px;
   }
 
   .title {
-    font-size: 1rem;
+    font-size: 0.95rem;
   }
 }
 </style>

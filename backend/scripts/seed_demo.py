@@ -25,6 +25,33 @@ OPERATORS = [
             "alternate_contact": None,
             "years_of_experience": 8,
             "specializations": ["Trekking", "Family", "Scenic Drives"],
+            "service_types": ["tour", "car"],
+            "car_services": [
+                {
+                    "vehicle_type": "SUV",
+                    "vehicle_label": "Tempo Traveler",
+                    "seats": 6,
+                    "luggage_capacity": 500,
+                    "pricing_model": "per_day",
+                    "base_fare": 3500.0,
+                    "fare_per_km": 8.0,
+                    "operating_hours": "6AM-11PM",
+                    "amenities": ["Air Conditioning", "WiFi", "Phone Charger"],
+                    "coverage_areas": ["Manali", "Spiti", "Shimla", "Kinnaur"]
+                },
+                {
+                    "vehicle_type": "Sedan",
+                    "vehicle_label": "Toyota Innova",
+                    "seats": 5,
+                    "luggage_capacity": 300,
+                    "pricing_model": "per_km",
+                    "base_fare": 100.0,
+                    "fare_per_km": 12.0,
+                    "operating_hours": "24/7",
+                    "amenities": ["Air Conditioning", "Phone Charger"],
+                    "coverage_areas": ["Manali", "Shimla"]
+                }
+            ],
             "average_rating": 4.8,
             "total_reviews": 142,
             "serving_areas": [
@@ -227,6 +254,8 @@ async def upsert_operator_profile(db, user_id: str, profile_data: dict):
         "alternate_contact": profile_data.get("alternate_contact"),
         "years_of_experience": profile_data.get("years_of_experience"),
         "specializations": profile_data.get("specializations", []),
+        "service_types": profile_data.get("service_types", ["tour"]),
+        "car_services": profile_data.get("car_services", []),
         "serving_areas": profile_data.get("serving_areas", []),
         "average_rating": profile_data.get("average_rating", 0),
         "total_reviews": profile_data.get("total_reviews", 0),

@@ -83,16 +83,20 @@
                   <div 
                     v-for="(sub, subIdx) in area.sub_locations" 
                     :key="subIdx"
-                    class="sub-location-item"
+                    :class="['sub-location-item', { 'has-image': sub.images && sub.images.length > 0 }]"
                   >
                     <div class="sub-location-images" v-if="sub.images && sub.images.length > 0">
                       <img :src="getImageUrl(sub.images[0])" :alt="sub.name" />
                     </div>
+                    <div v-else class="sub-location-placeholder" aria-hidden="true">
+                      <span class="placeholder-icon">📍</span>
+                      <span class="placeholder-text">No image</span>
+                    </div>
                     <div class="sub-location-info">
-                      <h5>
-                        {{ sub.name }}
+                      <div class="sub-location-header">
+                        <h5>{{ sub.name }}</h5>
                         <span v-if="sub.popular" class="popular-badge">⭐ Popular</span>
-                      </h5>
+                      </div>
                       <p v-if="sub.description">{{ sub.description }}</p>
                       <div v-if="sub.coordinates" class="location-coords">
                         📍 {{ sub.coordinates.latitude.toFixed(4) }}, {{ sub.coordinates.longitude.toFixed(4) }}
@@ -452,26 +456,62 @@ h3 {
 }
 
 .sub-locations-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 15px;
 }
 
 .sub-location-item {
-  display: flex;
-  gap: 15px;
-  padding: 15px;
-  background: #f9f9f9;
-  border-radius: 8px;
-  border: 1px solid #eee;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 148px;
+  gap: 16px;
+  padding: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  border-radius: 14px;
+  border: 1px solid #dfe8f3;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  align-items: start;
+}
+
+.sub-location-item.has-image {
+  grid-template-columns: 108px minmax(0, 1fr) 148px;
 }
 
 .sub-location-images {
-  width: 100px;
-  height: 100px;
+  width: 108px;
+  height: 108px;
   border-radius: 8px;
   overflow: hidden;
   flex-shrink: 0;
+}
+
+.sub-location-placeholder {
+  width: 108px;
+  height: 108px;
+  border-radius: 8px;
+  border: 1px dashed #cdd8e6;
+  background: linear-gradient(135deg, #eef5ff 0%, #f8fbff 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  text-align: center;
+  padding: 0.75rem;
+}
+
+.placeholder-icon {
+  font-size: 1.35rem;
+}
+
+.placeholder-text {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #5a6a7d;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .sub-location-images img {
@@ -482,38 +522,69 @@ h3 {
 
 .sub-location-info {
   flex: 1;
+  min-width: 0;
+}
+
+.sub-location-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-bottom: 0.5rem;
 }
 
 .sub-location-info h5 {
-  margin: 0 0 8px;
+  margin: 0;
   color: #333;
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  font-size: 1.02rem;
+  line-height: 1.3;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .popular-badge {
   font-size: 0.8em;
-  padding: 2px 8px;
+  padding: 0.18rem 0.55rem;
   background: #ffc107;
   color: white;
-  border-radius: 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .sub-location-info p {
-  margin: 0 0 8px;
-  color: #666;
-  font-size: 0.9em;
+  margin: 0 0 10px;
+  color: #58606e;
+  font-size: 0.94em;
+  line-height: 1.55;
 }
 
 .location-coords {
-  font-size: 0.85em;
-  color: #888;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.32rem 0.65rem;
+  border-radius: 999px;
+  background: #eef4fb;
+  color: #516070;
+  font-size: 0.82em;
+  font-weight: 500;
 }
 
 .sub-location-actions {
   display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  justify-content: center;
+  align-self: stretch;
+}
+
+.sub-location-actions .btn {
+  width: 100%;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
 }
 
 .reviews-list {
@@ -567,6 +638,7 @@ h3 {
   gap: 15px;
   justify-content: center;
   flex-wrap: wrap;
+}
 
 .map-modal {
   position: fixed;
@@ -599,7 +671,6 @@ h3 {
   border: none;
   font-size: 1.1rem;
   cursor: pointer;
-}
 }
 
 .btn {
@@ -662,12 +733,39 @@ h3 {
   }
 
   .sub-location-item {
-    flex-direction: column;
+    grid-template-columns: 1fr;
+    padding: 16px;
+  }
+
+  .sub-location-item.has-image {
+    grid-template-columns: 1fr;
   }
 
   .sub-location-images {
     width: 100%;
     height: 200px;
+  }
+
+  .sub-location-placeholder {
+    width: 100%;
+    height: 140px;
+  }
+
+  .sub-location-header {
+    align-items: flex-start;
+    gap: 0.45rem;
+  }
+
+  .sub-location-info h5 {
+    font-size: 0.98rem;
+  }
+
+  .popular-badge {
+    font-size: 0.75em;
+  }
+
+  .sub-location-actions {
+    width: 100%;
   }
 }
 </style>

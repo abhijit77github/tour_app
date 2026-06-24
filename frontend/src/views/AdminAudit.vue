@@ -237,6 +237,37 @@
             </button>
           </div>
         </div>
+
+        <div class="pagination">
+          <button
+            @click="systemPage = Math.max(1, systemPage - 1)"
+            :disabled="!systemPagination.hasPrev"
+            class="pagination-btn"
+          >
+            ← Previous
+          </button>
+
+          <div class="page-buttons">
+            <button
+              v-for="page in visibleSystemPages"
+              :key="`system-${page}`"
+              @click="systemPage = page"
+              :class="['page-btn', { active: systemPage === page }]"
+            >
+              {{ page }}
+            </button>
+          </div>
+
+          <span class="pagination-summary">Page {{ systemPagination.page }} of {{ systemPagination.totalPages }}</span>
+
+          <button
+            @click="systemPage = Math.min(systemPagination.totalPages, systemPage + 1)"
+            :disabled="!systemPagination.hasNext"
+            class="pagination-btn"
+          >
+            Next →
+          </button>
+        </div>
       </div>
     </div>
 
@@ -246,17 +277,17 @@
         <div class="sessions-stats">
           <div class="stat-card">
             <p class="stat-label">Active Sessions</p>
-            <p class="stat-value">{{ activeSessions.length }}</p>
+            <p class="stat-value">{{ sessionsSummary.activeCount }}</p>
           </div>
 
           <div class="stat-card">
             <p class="stat-label">Total Users Online</p>
-            <p class="stat-value">{{ uniqueUsersOnline }}</p>
+            <p class="stat-value">{{ sessionsSummary.uniqueUsersOnline }}</p>
           </div>
 
           <div class="stat-card">
             <p class="stat-label">Avg Session Duration</p>
-            <p class="stat-value">{{ avgSessionDuration }} min</p>
+            <p class="stat-value">{{ sessionsSummary.avgSessionDuration }} min</p>
           </div>
         </div>
 
@@ -337,6 +368,37 @@
               ⛔ Terminate
             </button>
           </div>
+        </div>
+
+        <div class="pagination sessions-pagination">
+          <button
+            @click="sessionsPage = Math.max(1, sessionsPage - 1)"
+            :disabled="!sessionsPagination.hasPrev"
+            class="pagination-btn"
+          >
+            ← Previous
+          </button>
+
+          <div class="page-buttons">
+            <button
+              v-for="page in visibleSessionsPages"
+              :key="`sessions-${page}`"
+              @click="sessionsPage = page"
+              :class="['page-btn', { active: sessionsPage === page }]"
+            >
+              {{ page }}
+            </button>
+          </div>
+
+          <span class="pagination-summary">Page {{ sessionsPagination.page }} of {{ sessionsPagination.totalPages }}</span>
+
+          <button
+            @click="sessionsPage = Math.min(sessionsPagination.totalPages, sessionsPage + 1)"
+            :disabled="!sessionsPagination.hasNext"
+            class="pagination-btn"
+          >
+            Next →
+          </button>
         </div>
       </div>
     </div>
@@ -434,6 +496,37 @@
               🚫 Block User
             </button>
           </div>
+        </div>
+
+        <div class="pagination">
+          <button
+            @click="securityPage = Math.max(1, securityPage - 1)"
+            :disabled="!securityPagination.hasPrev"
+            class="pagination-btn"
+          >
+            ← Previous
+          </button>
+
+          <div class="page-buttons">
+            <button
+              v-for="page in visibleSecurityPages"
+              :key="`security-${page}`"
+              @click="securityPage = page"
+              :class="['page-btn', { active: securityPage === page }]"
+            >
+              {{ page }}
+            </button>
+          </div>
+
+          <span class="pagination-summary">Page {{ securityPagination.page }} of {{ securityPagination.totalPages }}</span>
+
+          <button
+            @click="securityPage = Math.min(securityPagination.totalPages, securityPage + 1)"
+            :disabled="!securityPagination.hasNext"
+            class="pagination-btn"
+          >
+            Next →
+          </button>
         </div>
       </div>
     </div>
@@ -711,12 +804,48 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import api from '../services/api'
+import { adminBrandConfig } from '../config/adminBrand'
 
 const activeTab = ref('activity')
 const loading = ref(false)
 const loadError = ref('')
+const adminBrand = adminBrandConfig
+const defaultAuditPerPage = 10
+let auditReloadTimer = null
+let suppressAuditWatch = false
+
+const createPaginationState = (overrides = {}) => ({
+  page: 1,
+  perPage: defaultAuditPerPage,
+  total: 0,
+  totalPages: 1,
+  hasPrev: false,
+  hasNext: false,
+  ...overrides,
+})
+
+const buildVisiblePages = (pagination) => {
+  const total = Math.max(1, Number(pagination?.totalPages || 1))
+  const current = Math.min(Math.max(1, Number(pagination?.page || 1)), total)
+  const pages = []
+  const maxVisible = 5
+
+  if (total <= maxVisible) {
+    for (let page = 1; page <= total; page += 1) pages.push(page)
+    return pages
+  }
+
+  const half = Math.floor(maxVisible / 2)
+  let start = Math.max(1, current - half)
+  let end = Math.min(total, start + maxVisible - 1)
+  if (end - start < maxVisible - 1) {
+    start = Math.max(1, end - maxVisible + 1)
+  }
+  for (let page = start; page <= end; page += 1) pages.push(page)
+  return pages
+}
 
 // Activity Log
 const activityLogs = ref([
@@ -811,41 +940,7 @@ const visibleActivityPages = computed(() => {
 })
 
 // System Events
-const systemEvents = ref([
-  {
-    _id: '1',
-    title: 'Database Connection Timeout',
-    message: 'Connection to MongoDB server timed out after 30 seconds',
-    severity: 'critical',
-    service: 'database',
-    error_code: 'DB_TIMEOUT_001',
-    timestamp: new Date('2026-02-06T11:00:00'),
-    read: false,
-    details: 'Connection pool exhausted, max retries exceeded'
-  },
-  {
-    _id: '2',
-    title: 'High Memory Usage Detected',
-    message: 'API server memory usage reached 85%',
-    severity: 'warning',
-    service: 'api',
-    error_code: 'SYS_MEM_HIGH',
-    timestamp: new Date('2026-02-06T10:45:00'),
-    read: true,
-    details: 'Consider scaling or optimizing queries'
-  },
-  {
-    _id: '3',
-    title: 'Payment Gateway Sync',
-    message: 'Successfully synced payment transactions',
-    severity: 'info',
-    service: 'payment',
-    error_code: 'PAY_SYNC_OK',
-    timestamp: new Date('2026-02-06T10:00:00'),
-    read: true,
-    details: null
-  }
-])
+const systemEvents = ref([])
 
 const systemSearch = ref('')
 const systemFilters = ref({
@@ -853,20 +948,13 @@ const systemFilters = ref({
   service: '',
   unreadOnly: false
 })
+const systemPage = ref(1)
+const systemPagination = ref(createPaginationState())
 
 const filteredSystemEvents = computed(() => {
-  return systemEvents.value.filter(event => {
-    const matchesSearch = !systemSearch.value ||
-      event.title.toLowerCase().includes(systemSearch.value.toLowerCase()) ||
-      event.message.toLowerCase().includes(systemSearch.value.toLowerCase())
-    
-    const matchesSeverity = !systemFilters.value.severity || event.severity === systemFilters.value.severity
-    const matchesService = !systemFilters.value.service || event.service === systemFilters.value.service
-    const matchesRead = !systemFilters.value.unreadOnly || !event.read
-    
-    return matchesSearch && matchesSeverity && matchesService && matchesRead
-  })
+  return systemEvents.value
 })
+const visibleSystemPages = computed(() => buildVisiblePages(systemPagination.value))
 
 // User Sessions
 const sessions = ref([
@@ -897,7 +985,7 @@ const sessions = ref([
   {
     _id: '3',
     user_name: 'Admin System',
-    email: 'admin@tourapp.com',
+    email: adminBrand.emails.admin,
     user_type: 'admin',
     status: 'active',
     device_type: 'desktop',
@@ -913,81 +1001,34 @@ const sessionFilters = ref({
   userType: '',
   deviceType: ''
 })
-
-const filteredSessions = computed(() => {
-  return sessions.value.filter(session => {
-    const matchesSearch = !sessionSearch.value ||
-      session.user_name.toLowerCase().includes(sessionSearch.value.toLowerCase()) ||
-      session.ip_address.includes(sessionSearch.value)
-    
-    const matchesUserType = !sessionFilters.value.userType || session.user_type === sessionFilters.value.userType
-    const matchesDeviceType = !sessionFilters.value.deviceType || session.device_type === sessionFilters.value.deviceType
-    
-    return matchesSearch && matchesUserType && matchesDeviceType
-  })
+const sessionsPage = ref(1)
+const sessionsPagination = ref(createPaginationState())
+const sessionsSummary = ref({
+  activeCount: 0,
+  uniqueUsersOnline: 0,
+  avgSessionDuration: 0,
 })
 
-const activeSessions = computed(() => sessions.value.filter(s => s.status === 'active'))
-const uniqueUsersOnline = computed(() => new Set(activeSessions.value.map(s => s.user_name)).size)
-const avgSessionDuration = computed(() => Math.round(activeSessions.value.reduce((sum, s) => sum + getSessionDuration(s.created_at, s.last_activity), 0) / (activeSessions.value.length || 1)))
+const filteredSessions = computed(() => {
+  return sessions.value
+})
+const visibleSessionsPages = computed(() => buildVisiblePages(sessionsPagination.value))
 
 // Security Events
-const securityEvents = ref([
-  {
-    _id: '1',
-    title: 'Failed Login Attempt',
-    event_type: 'failed_login',
-    severity: 'critical',
-    user_name: 'Unknown',
-    ip_address: '203.0.113.99',
-    location: 'Unknown',
-    timestamp: new Date('2026-02-06T11:15:00'),
-    description: '5 consecutive failed login attempts from IP',
-    remediation: 'IP has been temporarily blocked for 15 minutes'
-  },
-  {
-    _id: '2',
-    title: 'Suspicious File Access',
-    event_type: 'suspicious',
-    severity: 'warning',
-    user_name: 'operator_123',
-    ip_address: '203.0.113.50',
-    location: 'Bangalore, IN',
-    timestamp: new Date('2026-02-06T10:30:00'),
-    description: 'Accessing sensitive financial reports outside business hours',
-    remediation: 'Monitor user activity and require additional verification'
-  },
-  {
-    _id: '3',
-    title: 'Anomaly Detected',
-    event_type: 'anomaly',
-    severity: 'warning',
-    user_name: 'tourist_456',
-    ip_address: '203.0.113.60',
-    location: 'Singapore, SG',
-    timestamp: new Date('2026-02-06T09:45:00'),
-    description: 'Location changed drastically in 10 minutes',
-    remediation: 'Request email verification and re-authentication'
-  }
-])
+const securityEvents = ref([])
 
 const securitySearch = ref('')
 const securityFilters = ref({
   eventType: '',
   dateFrom: ''
 })
+const securityPage = ref(1)
+const securityPagination = ref(createPaginationState())
 
 const filteredSecurityEvents = computed(() => {
-  return securityEvents.value.filter(event => {
-    const matchesSearch = !securitySearch.value ||
-      event.title.toLowerCase().includes(securitySearch.value.toLowerCase()) ||
-      event.description.toLowerCase().includes(securitySearch.value.toLowerCase())
-    
-    const matchesType = !securityFilters.value.eventType || event.event_type === securityFilters.value.eventType
-    
-    return matchesSearch && matchesType
-  })
+  return securityEvents.value
 })
+const visibleSecurityPages = computed(() => buildVisiblePages(securityPagination.value))
 
 const failedLoginAttempts = ref(12)
 const suspiciousActivities = ref(5)
@@ -1035,6 +1076,25 @@ const selectedActivity = ref(null)
 const showSessionModal = ref(false)
 const selectedSession = ref(null)
 
+const queueAuditReload = () => {
+  if (suppressAuditWatch) {
+    return
+  }
+  if (auditReloadTimer) {
+    clearTimeout(auditReloadTimer)
+  }
+  auditReloadTimer = setTimeout(() => {
+    auditReloadTimer = null
+    loadAuditSummary()
+  }, 250)
+}
+
+const syncPaginationState = (targetRef, pageRef, payload) => {
+  const nextState = createPaginationState(payload || {})
+  targetRef.value = nextState
+  pageRef.value = nextState.page
+}
+
 const loadAuditSummary = async () => {
   loading.value = true
   loadError.value = ''
@@ -1047,15 +1107,50 @@ const loadAuditSummary = async () => {
     }
 
     const response = await api.get('/admin/audit/summary', {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
+      params: {
+        system_page: systemPage.value,
+        system_per_page: systemPagination.value.perPage,
+        system_search: systemSearch.value,
+        system_severity: systemFilters.value.severity,
+        system_service: systemFilters.value.service,
+        system_unread_only: systemFilters.value.unreadOnly,
+        sessions_page: sessionsPage.value,
+        sessions_per_page: sessionsPagination.value.perPage,
+        session_search: sessionSearch.value,
+        session_user_type: sessionFilters.value.userType,
+        session_device_type: sessionFilters.value.deviceType,
+        security_page: securityPage.value,
+        security_per_page: securityPagination.value.perPage,
+        security_search: securitySearch.value,
+        security_event_type: securityFilters.value.eventType,
+        security_date_from: securityFilters.value.dateFrom,
+      },
     })
 
     const data = response.data || {}
 
-    if (Array.isArray(data.activityLogs)) activityLogs.value = data.activityLogs
-    if (Array.isArray(data.systemEvents)) systemEvents.value = data.systemEvents
-    if (Array.isArray(data.sessions)) sessions.value = data.sessions
-    if (Array.isArray(data.securityEvents)) securityEvents.value = data.securityEvents
+    suppressAuditWatch = true
+    try {
+      if (Array.isArray(data.activityLogs)) activityLogs.value = data.activityLogs
+      if (Array.isArray(data.systemEvents)) systemEvents.value = data.systemEvents
+      if (Array.isArray(data.sessions)) sessions.value = data.sessions
+      if (Array.isArray(data.securityEvents)) securityEvents.value = data.securityEvents
+
+      syncPaginationState(systemPagination, systemPage, data.systemEventsPagination)
+      syncPaginationState(sessionsPagination, sessionsPage, data.sessionsPagination)
+      syncPaginationState(securityPagination, securityPage, data.securityEventsPagination)
+
+      if (data.sessionsSummary) {
+        sessionsSummary.value = {
+          activeCount: Number(data.sessionsSummary.activeCount || 0),
+          uniqueUsersOnline: Number(data.sessionsSummary.uniqueUsersOnline || 0),
+          avgSessionDuration: Number(data.sessionsSummary.avgSessionDuration || 0),
+        }
+      }
+    } finally {
+      suppressAuditWatch = false
+    }
 
     failedLoginAttempts.value = Number(data.failedLoginAttempts || 0)
     suspiciousActivities.value = Number(data.suspiciousActivities || 0)
@@ -1081,6 +1176,35 @@ const loadAuditSummary = async () => {
 
 onMounted(() => {
   loadAuditSummary()
+})
+
+onUnmounted(() => {
+  if (auditReloadTimer) {
+    clearTimeout(auditReloadTimer)
+    auditReloadTimer = null
+  }
+})
+
+watch([activitySearch, () => activityFilters.value.actionType, () => activityFilters.value.resource, () => activityFilters.value.dateFrom, () => activityFilters.value.dateTo], () => {
+  activityPage.value = 1
+})
+
+watch([systemPage], queueAuditReload)
+watch([() => systemSearch.value, () => systemFilters.value.severity, () => systemFilters.value.service, () => systemFilters.value.unreadOnly], () => {
+  systemPage.value = 1
+  queueAuditReload()
+})
+
+watch([sessionsPage], queueAuditReload)
+watch([() => sessionSearch.value, () => sessionFilters.value.userType, () => sessionFilters.value.deviceType], () => {
+  sessionsPage.value = 1
+  queueAuditReload()
+})
+
+watch([securityPage], queueAuditReload)
+watch([() => securitySearch.value, () => securityFilters.value.eventType, () => securityFilters.value.dateFrom], () => {
+  securityPage.value = 1
+  queueAuditReload()
 })
 
 // Methods
@@ -2286,6 +2410,16 @@ const resetExportForm = () => {
 .page-buttons {
   display: flex;
   gap: 0.5rem;
+}
+
+.pagination-summary {
+  color: #718096;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.sessions-pagination {
+  grid-column: 1 / -1;
 }
 
 .page-btn {

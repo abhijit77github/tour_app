@@ -11,6 +11,51 @@
           </p>
         </div>
 
+        <StepGuidePanel
+          class="planner-guide"
+          variant="planner"
+          eyebrow="Planner Flow"
+          title="Three steps from brief to shortlist"
+          description="Tell the planner what you need, review grounded itinerary ideas, then keep only the operators you want in your cart."
+          :steps="plannerSteps"
+        />
+
+        <div class="quota-card glass-card">
+          <div class="card-title-row compact-title-row">
+            <h3>Planner quota</h3>
+            <span class="mini-pill" :class="quotaExhausted ? 'quota-pill danger' : 'quota-pill'">
+              {{ quotaExhausted ? 'Paused' : 'Available' }}
+            </span>
+          </div>
+
+          <div v-if="plannerQuotaLoading && !plannerQuota" class="itinerary-empty">Loading planner quota…</div>
+          <div v-else class="quota-grid-panel">
+            <div class="quota-stat">
+              <span class="req-label">Today</span>
+              <strong>{{ plannerQuota?.daily_remaining ?? '—' }}</strong>
+              <span>of {{ plannerQuota?.effective_daily_limit ?? 0 }} requests left</span>
+            </div>
+            <div class="quota-stat">
+              <span class="req-label">This month</span>
+              <strong>{{ plannerQuota?.monthly_remaining ?? '—' }}</strong>
+              <span>of {{ plannerQuota?.effective_monthly_limit ?? 0 }} requests left</span>
+            </div>
+          </div>
+
+          <p v-if="plannerQuota" class="quota-meta">
+            Resets {{ formatQuotaReset(plannerQuota.daily_resets_at) }} daily and {{ formatQuotaReset(plannerQuota.monthly_resets_at) }} monthly.
+          </p>
+          <p v-if="plannerQuotaError" class="quota-meta error-text">{{ plannerQuotaError }}</p>
+
+          <div v-if="quotaExhausted" class="quota-lock-panel">
+            <p class="quota-lock-copy">Planner quota is exhausted. Extra planner credits can only be granted after a server-verified ad or promotion reward.</p>
+            <button type="button" class="btn-reward-locked" disabled>
+              🔒 Reward unlock CTA locked
+            </button>
+            <p class="quota-lock-note">This CTA stays locked until rewarded ads or promotions are wired to the verification flow.</p>
+          </div>
+        </div>
+
         <div v-if="hasRequirements" class="req-card glass-card" v-show="showTripBrief">
           <div class="card-title-row compact-title-row">
             <h3>Your trip brief</h3>
@@ -45,10 +90,45 @@
           </div>
         </div>
 
+        <div v-if="hasRequirements" class="itinerary-card glass-card">
+          <div class="card-title-row compact-title-row">
+            <h3>Itinerary ideas</h3>
+            <div class="header-actions">
+              <button class="mini-toggle" type="button" @click="loadItineraryIdeas" :disabled="itineraryLoading">
+                {{ itineraryLoading ? 'Loading…' : 'Refresh' }}
+              </button>
+              <router-link
+                class="mini-link"
+                :to="{ path: '/itineraries', query: { area_name: requirements.locations?.[0] || '', state: requirements.states?.[0] || '', duration_days: requirements.duration_days || '' } }"
+              >Open builder</router-link>
+            </div>
+          </div>
+
+          <div v-if="itineraryError" class="itinerary-empty">{{ itineraryError }}</div>
+          <div v-else-if="itineraryLoading && !itineraryIdeas.length" class="itinerary-empty">Finding grounded itinerary options…</div>
+          <div v-else-if="!itineraryIdeas.length" class="itinerary-empty">No itinerary ideas yet. Add destination and duration details first.</div>
+          <div v-else class="itinerary-list">
+            <article v-for="item in itineraryIdeas" :key="item._id" class="itinerary-item">
+              <div class="itinerary-top">
+                <div>
+                  <h4>{{ item.title }}</h4>
+                  <p>{{ item.summary || 'Operator-curated template' }}</p>
+                </div>
+                <span class="mini-pill count-pill">{{ item.duration_days }}d</span>
+              </div>
+              <div class="itinerary-meta">
+                <span>{{ item.primary_location?.area_name }}</span>
+                <span v-if="item.operator_name">{{ item.operator_name }}</span>
+                <span>Score {{ Number(item.score || 0).toFixed(1) }}</span>
+              </div>
+            </article>
+          </div>
+        </div>
+
         <div class="operator-header" v-if="suggestedOperators.length">
           <div>
-            <h3>Matched operators</h3>
-            <p>Choose any operator you want to keep in the cart.</p>
+            <h3>Matched providers</h3>
+            <p>Choose any provider you want to keep in the cart.</p>
           </div>
           <div class="header-actions">
             <span class="mini-pill count-pill">{{ suggestedOperators.length }}</span>
@@ -70,6 +150,7 @@
               <div class="op-meta">
                 <h4>{{ op.business_name }}</h4>
                 <div class="op-match-row">
+                  <span class="match-pill service-pill">{{ serviceLabel(op) }}</span>
                   <span class="match-pill" :class="matchClass(op)">{{ matchLabel(op) }}</span>
                   <span v-if="op.budget_fit" class="match-pill budget-pill">Budget fit</span>
                   <span class="match-score">Score {{ Number(op.score || 0).toFixed(1) }}</span>
@@ -84,6 +165,13 @@
             <p v-if="op.match_reason" class="op-match-reason">{{ op.match_reason }}</p>
 
             <p v-if="op.description" class="op-description">{{ op.description }}</p>
+
+            <div v-if="op.recommended_service === 'car' && op.car_option" class="car-quick-specs">
+              <span>{{ op.car_option.vehicle_type || 'Car service' }}</span>
+              <span v-if="op.car_option.seats">{{ op.car_option.seats }} seats</span>
+              <span v-if="op.car_option.pricing_model">{{ op.car_option.pricing_model }}</span>
+              <span v-if="op.car_option.base_fare">From ${{ op.car_option.base_fare }}</span>
+            </div>
 
             <div class="op-areas">
               <span v-for="area in op.serving_areas.slice(0, 3)" :key="area" class="area-tag">
@@ -121,6 +209,34 @@
           <div class="toolbar-main">
             <strong>Tour Planner</strong>
             <span class="toolbar-sub">Live assistant with ranked operator matching</span>
+            <div class="service-switch">
+              <button
+                type="button"
+                class="service-btn"
+                :class="{ active: serviceMode === 'tour' }"
+                @click="serviceMode = 'tour'"
+              >Tours</button>
+              <button
+                type="button"
+                class="service-btn"
+                :class="{ active: serviceMode === 'car' }"
+                @click="serviceMode = 'car'"
+              >Cars</button>
+              <button
+                type="button"
+                class="service-btn"
+                :class="{ active: serviceMode === 'both' }"
+                @click="serviceMode = 'both'"
+              >Both</button>
+            </div>
+            <button
+              type="button"
+              class="btn-car-only"
+              @click="quickCarMode"
+              title="Quick filter for car services only"
+            >
+              🚗 Car Services
+            </button>
           </div>
           <div class="toolbar-stats">
             <div>
@@ -134,6 +250,10 @@
             <div>
               <strong>{{ messages.length }}</strong>
               <span>Messages</span>
+            </div>
+            <div>
+              <strong>{{ plannerQuota?.daily_remaining ?? '—' }}</strong>
+              <span>Planner requests left today</span>
             </div>
           </div>
         </section>
@@ -210,6 +330,7 @@
 <script setup>
 import { ref, computed, nextTick, onMounted } from 'vue'
 import { v4 as uuidv4 } from 'uuid'
+import StepGuidePanel from '../components/StepGuidePanel.vue'
 import api from '../services/api'
 import { useCartStore } from '../stores/cart'
 
@@ -224,8 +345,15 @@ const streamingText = ref('')
 const statusText = ref('')
 const addedIds = ref(new Set())
 const addingId = ref(null)
+const serviceMode = ref('tour')
 const showTripBrief = ref(true)
 const showOperators = ref(true)
+const itineraryIdeas = ref([])
+const itineraryLoading = ref(false)
+const itineraryError = ref('')
+const plannerQuota = ref(null)
+const plannerQuotaLoading = ref(false)
+const plannerQuotaError = ref('')
 const messagesEl = ref(null)
 const inputEl = ref(null)
 const cartStore = useCartStore()
@@ -236,30 +364,58 @@ const hasRequirements = computed(() =>
   requirements.value.group_size
 )
 
+const quotaExhausted = computed(() => {
+  if (!plannerQuota.value) return false
+  return Number(plannerQuota.value.daily_remaining || 0) <= 0 || Number(plannerQuota.value.monthly_remaining || 0) <= 0
+})
+
 const starterPrompts = [
   'I want to visit Coorg for 4 days with family',
   'Planning a trip to Goa next month, budget $500',
   'Adventure trip to Himalayas for 2 people',
   'Cultural tour of Rajasthan for 5 days',
 ]
+const plannerSteps = [
+  { title: 'Describe the trip plainly', detail: 'Destination, dates, travelers, budget, and vibe are enough for the planner to start narrowing the route.' },
+  { title: 'Review itinerary ideas', detail: 'The sidebar surfaces grounded itinerary templates once the planner has enough destination and duration detail.' },
+  { title: 'Add only the best matches', detail: 'Keep provider selection deliberate by adding individual operators to cart instead of accepting a bulk shortlist.' }
+]
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 onMounted(async () => {
   localStorage.setItem('plannerSessionId', sessionId.value)
   cartStore.initCart()
+  await loadPlannerQuota()
   await loadSession()
 })
+
+async function loadPlannerQuota() {
+  plannerQuotaLoading.value = true
+  plannerQuotaError.value = ''
+  try {
+    const res = await api.get('/tour-planner/quota')
+    plannerQuota.value = res.data?.quota || null
+  } catch (error) {
+    plannerQuotaError.value = error.response?.data?.detail || 'Unable to load planner quota.'
+  } finally {
+    plannerQuotaLoading.value = false
+  }
+}
 
 // ─── Load existing session ────────────────────────────────────────────────────
 async function loadSession() {
   try {
     const res = await api.get(`/tour-planner/session/${sessionId.value}`)
-    if (res.data.messages?.length) {
-      messages.value = res.data.messages
-      suggestedOperators.value = res.data.suggested_operators || []
-      requirements.value = res.data.requirements || {}
-      scrollBottom()
+    messages.value = res.data.messages || []
+    suggestedOperators.value = res.data.suggested_operators || []
+    requirements.value = res.data.requirements || {}
+    if (Object.keys(requirements.value || {}).length) {
+      await loadItineraryIdeas()
+    } else {
+      itineraryIdeas.value = []
+      itineraryError.value = ''
     }
+    scrollBottom()
   } catch (e) {
     // new session, ignore
   }
@@ -288,13 +444,22 @@ async function sendMessage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ session_id: sessionId.value, message: text }),
+        body: JSON.stringify({
+          session_id: sessionId.value,
+          message: text,
+          service_mode: serviceMode.value,
+        }),
       }
     )
 
     if (!response.ok) {
       const err = await response.json()
-      messages.value.push({ role: 'assistant', text: `⚠️ ${err.detail || 'Something went wrong'}` })
+      if (response.status === 429 && err?.detail?.quota) {
+        plannerQuota.value = err.detail.quota
+        messages.value.push({ role: 'assistant', text: `⚠️ ${err.detail.message || 'Planner request limit reached.'}` })
+      } else {
+        messages.value.push({ role: 'assistant', text: `⚠️ ${typeof err.detail === 'string' ? err.detail : 'Something went wrong'}` })
+      }
       return
     }
 
@@ -319,6 +484,9 @@ async function sendMessage() {
             statusText.value = event.text
           } else if (event.type === 'operators') {
             suggestedOperators.value = event.operators
+          } else if (event.type === 'itineraries') {
+            itineraryIdeas.value = event.itineraries || []
+            itineraryError.value = ''
           } else if (event.type === 'error') {
             streamingText.value = ''
             messages.value.push({ role: 'assistant', text: `⚠️ ${event.text}` })
@@ -337,6 +505,8 @@ async function sendMessage() {
   } finally {
     streaming.value = false
     streamingText.value = ''
+    await loadSession()
+    await loadPlannerQuota()
     scrollBottom()
     await nextTick()
     inputEl.value?.focus()
@@ -345,6 +515,13 @@ async function sendMessage() {
 
 function sendStarter(prompt) {
   input.value = prompt
+  sendMessage()
+}
+
+// ─── Quick car mode ───────────────────────────────────────────────────────────
+function quickCarMode() {
+  serviceMode.value = 'car'
+  input.value = 'I need car services in the area I mentioned'
   sendMessage()
 }
 
@@ -366,12 +543,17 @@ async function addToCart(op) {
     const plannerCartItem = {
       operator_id: op.id,
       operator_name: op.business_name,
+      service_type: op.recommended_service || 'tour',
       area_name: primaryArea,
       state: primaryState,
       country: primaryCountry,
       sub_location_name: `Planner shortlist: ${op.business_name}`,
       description: op.match_reason || op.description || 'Added from Tour Planner recommendations',
       coordinates: matchedAreaDetail?.coordinates || null,
+      vehicle_type: op.car_option?.vehicle_type,
+      seats: op.car_option?.seats,
+      pricing_model: op.car_option?.pricing_model,
+      base_fare: op.car_option?.base_fare,
       images: [],
     }
     cartStore.addToCart(plannerCartItem)
@@ -392,6 +574,21 @@ async function addToCart(op) {
   }
 }
 
+async function loadItineraryIdeas() {
+  if (!sessionId.value) return
+  itineraryLoading.value = true
+  itineraryError.value = ''
+  try {
+    const res = await api.get(`/tour-planner/session/${sessionId.value}/itineraries`)
+    itineraryIdeas.value = res.data.itineraries || []
+  } catch (err) {
+    itineraryIdeas.value = []
+    itineraryError.value = err.response?.data?.detail || 'Unable to load itinerary ideas right now.'
+  } finally {
+    itineraryLoading.value = false
+  }
+}
+
 // ─── New session ──────────────────────────────────────────────────────────────
 function startNewSession() {
   const newId = uuidv4()
@@ -403,6 +600,8 @@ function startNewSession() {
   streamingText.value = ''
   statusText.value = ''
   addedIds.value = new Set()
+  itineraryIdeas.value = []
+  itineraryError.value = ''
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -437,6 +636,17 @@ function matchClass(op) {
   if (op.match_type === 'exact') return 'match-exact'
   if (op.match_type === 'similar') return 'match-similar'
   return 'match-fallback'
+}
+
+function serviceLabel(op) {
+  const mode = op.recommended_service || 'tour'
+  if (mode === 'car') return 'Car service'
+  return 'Tour service'
+}
+
+function formatQuotaReset(value) {
+  if (!value) return 'soon'
+  return new Date(value).toLocaleString()
 }
 </script>
 
@@ -477,6 +687,10 @@ function matchClass(op) {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(245, 250, 249, 0.9));
   box-shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
   min-height: 0;
+}
+
+.planner-guide {
+  border-radius: 24px;
 }
 
 .sidebar-glow {
@@ -520,6 +734,16 @@ function matchClass(op) {
 }
 
 .req-card {
+  border-radius: 24px;
+  padding: 0.8rem;
+}
+
+.quota-card {
+  border-radius: 24px;
+  padding: 0.8rem;
+}
+
+.itinerary-card {
   border-radius: 24px;
   padding: 0.8rem;
 }
@@ -574,6 +798,17 @@ function matchClass(op) {
   color: #0f766e;
 }
 
+.mini-link {
+  color: #0369a1;
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.mini-link:hover {
+  text-decoration: underline;
+}
+
 .mini-pill {
   display: inline-flex;
   align-items: center;
@@ -596,6 +831,141 @@ function matchClass(op) {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.5rem;
   margin-top: 0.55rem;
+}
+
+.quota-grid-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.quota-stat {
+  padding: 0.55rem 0.65rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  display: grid;
+  gap: 0.15rem;
+}
+
+.quota-stat strong {
+  font-size: 1.08rem;
+  color: #0f172a;
+}
+
+.quota-stat span:last-child {
+  font-size: 0.76rem;
+  color: #64748b;
+}
+
+.quota-meta {
+  margin: 0.55rem 0 0;
+  color: #64748b;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.quota-pill.danger {
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+.quota-lock-panel {
+  margin-top: 0.65rem;
+  padding: 0.75rem;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.04);
+  border: 1px dashed rgba(148, 163, 184, 0.28);
+  display: grid;
+  gap: 0.5rem;
+}
+
+.quota-lock-copy,
+.quota-lock-note {
+  margin: 0;
+  color: #475569;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.quota-lock-note {
+  color: #64748b;
+}
+
+.btn-reward-locked {
+  border: none;
+  border-radius: 14px;
+  padding: 0.72rem 0.9rem;
+  background: linear-gradient(135deg, #cbd5e1, #94a3b8);
+  color: #0f172a;
+  font-weight: 800;
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.error-text {
+  color: #b91c1c;
+}
+
+.itinerary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.itinerary-item {
+  padding: 0.65rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.itinerary-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.65rem;
+  align-items: flex-start;
+}
+
+.itinerary-top h4 {
+  margin: 0;
+  font-size: 0.88rem;
+  color: #0f172a;
+}
+
+.itinerary-top p {
+  margin: 0.2rem 0 0;
+  color: #64748b;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.itinerary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
+.itinerary-meta span {
+  background: rgba(241, 245, 249, 0.9);
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.74rem;
+  color: #475569;
+  font-weight: 700;
+}
+
+.itinerary-empty {
+  margin-top: 0.55rem;
+  padding: 0.65rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px dashed rgba(148, 163, 184, 0.22);
+  font-size: 0.74rem;
+  color: #475569;
 }
 
 .req-item {
@@ -707,6 +1077,11 @@ function matchClass(op) {
   background: rgba(148, 163, 184, 0.16);
 }
 
+.service-pill {
+  color: #1e293b;
+  background: rgba(148, 163, 184, 0.18);
+}
+
 .budget-pill {
   color: #7c3aed;
   background: rgba(124, 58, 237, 0.14);
@@ -742,6 +1117,23 @@ function matchClass(op) {
   color: #475569;
   font-size: 0.82rem;
   line-height: 1.45;
+}
+
+.car-quick-specs {
+  margin-top: 0.45rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.car-quick-specs span {
+  font-size: 0.7rem;
+  color: #334155;
+  background: rgba(226, 232, 240, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 999px;
+  padding: 0.2rem 0.45rem;
+  font-weight: 700;
 }
 
 .op-match-reason {
@@ -864,6 +1256,52 @@ function matchClass(op) {
   display: block;
   font-size: 0.98rem;
   color: #0f172a;
+}
+
+.service-switch {
+  margin-top: 0.45rem;
+  display: inline-flex;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 10px;
+  padding: 0.15rem;
+  gap: 0.15rem;
+}
+
+.service-btn {
+  border: none;
+  background: transparent;
+  color: #475569;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 0.3rem 0.55rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.service-btn.active {
+  background: rgba(15, 118, 110, 0.14);
+  color: #0f766e;
+}
+
+.btn-car-only {
+  margin-left: 0.8rem;
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  background: rgba(220, 38, 38, 0.06);
+  color: #991b1b;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.35rem 0.7rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.btn-car-only:hover {
+  background: rgba(220, 38, 38, 0.12);
+  border-color: rgba(220, 38, 38, 0.5);
 }
 
 .toolbar-sub {
@@ -1203,6 +1641,11 @@ function matchClass(op) {
 
   .bubble {
     max-width: 86%;
+  }
+
+  .req-grid,
+  .quota-grid-panel {
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -6,15 +6,20 @@
         <button class="menu-toggle" @click="sidebarOpen = !sidebarOpen">
           ☰ Menu
         </button>
-        <h1 class="header-title">Tour App Admin</h1>
+        <div class="admin-brand">
+          <img :src="brandLogo" :alt="adminBrand.logoAlt" class="admin-brand-logo" />
+          <div class="admin-brand-copy">
+            <h1 class="header-title">{{ adminBrand.consoleTitle }}</h1>
+          </div>
+        </div>
       </div>
 
       <div class="header-right">
         <!-- Notifications -->
-        <div class="notifications">
-          <button class="notification-btn" title="Notifications">
+        <div v-if="canAccess('admin.notifications.manage')" class="notifications">
+          <button class="notification-btn" title="Notifications" @click="openAdminAlerts">
             🔔
-            <span class="notification-badge">3</span>
+            <span v-if="adminAlertUnreadCount > 0" class="notification-badge">{{ adminAlertUnreadCount }}</span>
           </button>
         </div>
 
@@ -42,9 +47,18 @@
     <div class="admin-main">
       <!-- Sidebar -->
       <aside class="admin-sidebar" :class="{ open: sidebarOpen }">
+        <div class="sidebar-brand">
+          <img :src="brandLogo" :alt="adminBrand.logoAlt" class="sidebar-brand-logo" />
+          <div class="sidebar-brand-copy">
+            <h2 class="sidebar-brand-title">{{ adminBrand.sidebarTitle }}</h2>
+            <p class="sidebar-brand-description">{{ adminBrand.sidebarDescription }}</p>
+          </div>
+        </div>
+
         <nav class="sidebar-nav">
           <!-- Dashboard -->
           <router-link
+            v-if="canAccess('admin.dashboard.read')"
             to="/admin/dashboard"
             class="nav-item"
             :class="{ active: $route.path.includes('dashboard') }"
@@ -58,6 +72,7 @@
           <div class="nav-section">
             <p class="section-title">User Management</p>
             <router-link
+              v-if="canAccess('admin.tourists.read')"
               to="/admin/tourists"
               class="nav-item"
               :class="{ active: $route.path.includes('tourists') }"
@@ -68,6 +83,7 @@
             </router-link>
 
             <router-link
+              v-if="canAccess('admin.operators.read')"
               to="/admin/operators"
               class="nav-item"
               :class="{ active: $route.path.includes('operators') }"
@@ -82,6 +98,7 @@
           <div class="nav-section">
             <p class="section-title">Business Management</p>
             <router-link
+              v-if="canAccess('admin.quotes.read')"
               to="/admin/quotes"
               class="nav-item"
               :class="{ active: $route.path.includes('quotes') }"
@@ -92,6 +109,18 @@
             </router-link>
 
             <router-link
+              v-if="canAccess('admin.operators.read')"
+              to="/admin/promotions"
+              class="nav-item"
+              :class="{ active: $route.path.includes('promotions') }"
+              @click="sidebarOpen = false"
+            >
+              <span class="nav-icon">📣</span>
+              <span class="nav-label">Promotions</span>
+            </router-link>
+
+            <router-link
+              v-if="canAccess('admin.operators.read')"
               to="/admin/performance"
               class="nav-item"
               :class="{ active: $route.path.includes('performance') }"
@@ -102,6 +131,7 @@
             </router-link>
 
             <router-link
+              v-if="canAccess('admin.audit.read')"
               to="/admin/reviews"
               class="nav-item"
               :class="{ active: $route.path.includes('reviews') }"
@@ -116,6 +146,17 @@
           <div class="nav-section">
             <p class="section-title">Communications</p>
             <router-link
+              v-if="canAccess('admin.tickets.manage')"
+              to="/admin/tickets"
+              class="nav-item"
+              :class="{ active: $route.path.includes('tickets') }"
+              @click="sidebarOpen = false"
+            >
+              <span class="nav-icon">🎫</span>
+              <span class="nav-label">Tickets</span>
+            </router-link>
+            <router-link
+              v-if="canAccess('admin.notifications.manage')"
               to="/admin/notifications"
               class="nav-item"
               :class="{ active: $route.path.includes('notifications') }"
@@ -130,6 +171,7 @@
           <div class="nav-section">
             <p class="section-title">Financial Management</p>
             <router-link
+              v-if="canAccess('admin.billing.read')"
               to="/admin/financial"
               class="nav-item"
               :class="{ active: $route.path.includes('financial') }"
@@ -144,6 +186,7 @@
           <div class="nav-section">
             <p class="section-title">Compliance</p>
             <router-link
+              v-if="canAccess('admin.audit.read')"
               to="/admin/audit"
               class="nav-item"
               :class="{ active: $route.path.includes('audit') }"
@@ -158,6 +201,7 @@
           <div class="nav-section">
             <p class="section-title">Analytics & Reports</p>
             <router-link
+              v-if="canAccess('admin.reports.read')"
               to="/admin/reports"
               class="nav-item"
               :class="{ active: $route.path.includes('reports') }"
@@ -172,6 +216,7 @@
           <div class="nav-section">
             <p class="section-title">System</p>
             <router-link
+              v-if="canAccess('admin.settings.manage')"
               to="/admin/settings"
               class="nav-item"
               :class="{ active: $route.path.includes('settings') }"
@@ -179,6 +224,26 @@
             >
               <span class="nav-icon">⚙️</span>
               <span class="nav-label">Settings</span>
+            </router-link>
+            <router-link
+              v-if="canAccess('admin.backups.manage')"
+              to="/admin/backups"
+              class="nav-item"
+              :class="{ active: $route.path.includes('backups') }"
+              @click="sidebarOpen = false"
+            >
+              <span class="nav-icon">💾</span>
+              <span class="nav-label">Backups</span>
+            </router-link>
+            <router-link
+              v-if="canAccess('admin.team.manage')"
+              to="/admin/team"
+              class="nav-item"
+              :class="{ active: $route.path.includes('team') }"
+              @click="sidebarOpen = false"
+            >
+              <span class="nav-icon">🛡️</span>
+              <span class="nav-label">Team Access</span>
             </router-link>
           </div>
         </nav>
@@ -205,19 +270,41 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../services/api'
+import { useAccessStore } from '../stores/access'
+import brandLogo from '../../resources/logo/app_logo_compact.svg'
+import { adminBrandConfig } from '../config/adminBrand'
 
 const router = useRouter()
+const accessStore = useAccessStore()
 const sidebarOpen = ref(false)
 const showProfileMenu = ref(false)
 const loadingContent = ref(false)
 const adminUser = ref(null)
+const adminAlertUnreadCount = ref(0)
+const adminBrand = adminBrandConfig
+let alertRefreshTimer = null
 
 const adminName = computed(() => {
   return adminUser.value?.full_name || 'Admin'
 })
+
+const canAccess = (permission) => accessStore.hasAdminPermission(permission)
+
+const loadAdminAlertSummary = async () => {
+  try {
+    const response = await api.get('/admin/notifications/summary')
+    adminAlertUnreadCount.value = response.data?.admin_alerts?.unread_count || 0
+  } catch (error) {
+    console.error('Error fetching admin alert summary:', error)
+  }
+}
+
+const openAdminAlerts = async () => {
+  await router.push({ name: 'AdminNotifications', query: { tab: 'alerts' } })
+}
 
 onMounted(async () => {
   // Fetch admin profile
@@ -232,6 +319,11 @@ onMounted(async () => {
 
     const response = await api.get('/admin/profile')
     adminUser.value = response.data
+    await accessStore.loadAdminContext(true)
+    if (canAccess('admin.notifications.manage')) {
+      await loadAdminAlertSummary()
+      alertRefreshTimer = window.setInterval(loadAdminAlertSummary, 30000)
+    }
   } catch (error) {
     console.error('Error fetching admin profile:', error)
     localStorage.removeItem('adminToken')
@@ -240,9 +332,16 @@ onMounted(async () => {
   }
 })
 
+onBeforeUnmount(() => {
+  if (alertRefreshTimer) {
+    window.clearInterval(alertRefreshTimer)
+  }
+})
+
 const handleLogout = async () => {
   localStorage.removeItem('adminToken')
   localStorage.removeItem('adminUser')
+  accessStore.reset()
   delete api.defaults.headers.common['Authorization']
   await router.push('/admin/login')
 }
@@ -259,16 +358,17 @@ const handleLogout = async () => {
 
 /* Header */
 .admin-header {
-  background: white;
-  border-bottom: 1px solid #e2e8f0;
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.9);
   padding: 1rem 2rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
   position: sticky;
   top: 0;
   z-index: 100;
+  backdrop-filter: blur(10px);
 }
 
 .header-left {
@@ -277,9 +377,27 @@ const handleLogout = async () => {
   gap: 1.5rem;
 }
 
+.admin-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.admin-brand-logo {
+  width: 132px;
+  height: 44px;
+  object-fit: contain;
+}
+
+.admin-brand-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
 .menu-toggle {
   display: none;
-  background: #667eea;
+  background: #0f766e;
   color: white;
   border: none;
   padding: 0.5rem 1rem;
@@ -290,10 +408,10 @@ const handleLogout = async () => {
 }
 
 .header-title {
-  font-size: 1.5rem;
+  font-size: 1.35rem;
   font-weight: 700;
   margin: 0;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #0f766e 0%, #102a43 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -357,7 +475,7 @@ const handleLogout = async () => {
 }
 
 .profile-btn {
-  background: #edf2f7;
+  background: #edf7f6;
   border: none;
   width: 2.5rem;
   height: 2.5rem;
@@ -368,7 +486,7 @@ const handleLogout = async () => {
 }
 
 .profile-btn:hover {
-  background: #e2e8f0;
+  background: #dff1ee;
   transform: scale(1.05);
 }
 
@@ -424,6 +542,37 @@ const handleLogout = async () => {
   flex-direction: column;
 }
 
+.sidebar-brand {
+  padding: 1.1rem 1rem 0.75rem;
+  border-bottom: 1px solid rgba(160, 174, 192, 0.18);
+  background: linear-gradient(180deg, rgba(15, 118, 110, 0.18), rgba(15, 23, 42, 0));
+}
+
+.sidebar-brand-logo {
+  width: 158px;
+  height: 56px;
+  object-fit: contain;
+  display: block;
+}
+
+.sidebar-brand-copy {
+  margin-top: 0.85rem;
+}
+
+.sidebar-brand-title {
+  margin: 0.35rem 0 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.sidebar-brand-description {
+  margin: 0.45rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: #cbd5e0;
+}
+
 .sidebar-nav {
   flex: 1;
   padding: 1rem 0;
@@ -462,7 +611,7 @@ const handleLogout = async () => {
 }
 
 .nav-item.active {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #0f766e 0%, #102a43 100%);
   color: white;
   font-weight: 600;
 }
@@ -556,6 +705,10 @@ const handleLogout = async () => {
     left: 0;
   }
 
+  .sidebar-brand {
+    padding-top: 1.25rem;
+  }
+
   .sidebar-overlay {
     display: block;
   }
@@ -575,6 +728,11 @@ const handleLogout = async () => {
   .header-title {
     font-size: 1.25rem;
   }
+
+  .admin-brand-logo {
+    width: 112px;
+    height: 40px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -584,6 +742,11 @@ const handleLogout = async () => {
 
   .header-left {
     gap: 0.75rem;
+  }
+
+  .admin-brand-logo {
+    width: 102px;
+    height: 36px;
   }
 
   .header-title {

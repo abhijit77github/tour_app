@@ -16,6 +16,12 @@ variable "environment" {
   default     = "dev"
 }
 
+variable "frontend_url_override" {
+  description = "Optional explicit public frontend origin for backend CORS"
+  type        = string
+  default     = ""
+}
+
 # MongoDB variables
 variable "mongodb_version" {
   description = "MongoDB version"
@@ -54,6 +60,12 @@ variable "backend_image_tag" {
   default     = "latest"
 }
 
+variable "database_name" {
+  description = "MongoDB database name used by the application"
+  type        = string
+  default     = "tour_app_db"
+}
+
 # Frontend variables
 variable "frontend_replicas" {
   description = "Number of frontend pod replicas"
@@ -84,6 +96,18 @@ variable "backend_subdomain" {
   description = "Backend subdomain"
   type        = string
   default     = "api"
+}
+
+variable "ingress_class_name" {
+  description = "Ingress class name"
+  type        = string
+  default     = "nginx"
+}
+
+variable "client_max_body_size" {
+  description = "Maximum request body size exposed through ingress"
+  type        = string
+  default     = "10m"
 }
 
 # Resource limits

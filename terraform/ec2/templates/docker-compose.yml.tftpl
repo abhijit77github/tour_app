@@ -1,0 +1,66 @@
+services:
+  mongo:
+    image: ${mongo_image}
+    restart: unless-stopped
+    command: ["--bind_ip_all"]
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  init-seed:
+    image: ${backend_image}
+    restart: "no"
+    environment:
+      MONGODB_URL: ${mongodb_url}
+      DATABASE_NAME: ${database_name}
+      SECRET_KEY: ${secret_key}
+      FRONTEND_URL: ${frontend_origin}
+      DEBUG: ${debug}
+      HOST: 0.0.0.0
+      PORT: "${backend_port}"
+    command: ["python", "-m", "backend.scripts.seed_local_dev"]
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  backend:
+    image: ${backend_image}
+    restart: unless-stopped
+    environment:
+      MONGODB_URL: ${mongodb_url}
+      DATABASE_NAME: ${database_name}
+      SECRET_KEY: ${secret_key}
+      FRONTEND_URL: ${frontend_origin}
+      DEBUG: ${debug}
+      HOST: 0.0.0.0
+      PORT: "${backend_port}"
+    ports:
+      - "127.0.0.1:${backend_port}:${backend_port}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${backend_port}/health', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      mongo:
+        condition: service_healthy
+      init-seed:
+        condition: service_completed_successfully
+
+  frontend:
+    image: ${frontend_image}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${frontend_port}:${frontend_port}"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  mongo_data:

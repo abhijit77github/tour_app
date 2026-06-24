@@ -19,7 +19,7 @@
       </div>
 
       <div class="filter-controls">
-        <select v-model="statusFilter" class="filter-select">
+          <select v-model="statusFilter" @change="handleFilterChange" class="filter-select">
           <option value="">All Status</option>
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
@@ -27,7 +27,7 @@
       </div>
 
       <div class="pagination-info">
-        Showing {{ currentPage * pageSize - pageSize + 1 }} to {{ Math.min(currentPage * pageSize, totalTourists) }} of {{ totalTourists }}
+          Showing {{ pageStart }} to {{ pageEnd }} of {{ totalTourists }}
       </div>
     </div>
 
@@ -38,7 +38,7 @@
     </div>
 
     <!-- Empty State -->
-    <div v-else-if="filteredTourists.length === 0" class="empty-state">
+    <div v-else-if="tourists.length === 0" class="empty-state">
       <p>📭 No tourists found</p>
       <span v-if="searchQuery" class="hint">Try adjusting your search criteria</span>
     </div>
@@ -59,7 +59,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="tourist in paginatedTourists" :key="tourist._id" class="tourist-row">
+          <tr v-for="tourist in tourists" :key="tourist._id" class="tourist-row">
             <td class="name-cell">{{ tourist.full_name }}</td>
             <td class="email-cell">{{ tourist.email }}</td>
             <td class="phone-cell">{{ tourist.phone || 'N/A' }}</td>
@@ -114,26 +114,19 @@
     <div v-if="totalTourists > 0" class="pagination">
       <button
         @click="previousPage"
-        :disabled="currentPage === 1"
+        :disabled="currentPage === 1 || loading"
         class="pagination-btn"
       >
         ← Previous
       </button>
 
       <div class="page-numbers">
-        <button
-          v-for="page in visiblePages"
-          :key="page"
-          @click="goToPage(page)"
-          :class="['page-number', { active: currentPage === page }]"
-        >
-          {{ page }}
-        </button>
+        <span :class="['page-number', 'active']">{{ currentPage }}</span>
       </div>
 
       <button
         @click="nextPage"
-        :disabled="currentPage >= totalPages"
+        :disabled="!pagination.hasMore || loading"
         class="pagination-btn"
       >
         Next →
@@ -253,6 +246,9 @@ const searchQuery = ref('')
 const statusFilter = ref('')
 const currentPage = ref(1)
 const pageSize = 10
+const totalTourists = ref(0)
+const pagination = ref({ totalPages: 1, hasMore: false })
+const pageCursors = ref([null])
 const selectedTourist = ref(null)
 const showModal = ref(false)
 const showConfirmDialog = ref(false)
@@ -260,51 +256,9 @@ const confirmMessage = ref('')
 const confirmButtonText = ref('')
 let confirmCallback = null
 
-const totalTourists = computed(() => tourists.value.length)
-const totalPages = computed(() => Math.ceil(filteredTourists.value.length / pageSize))
-
-const filteredTourists = computed(() => {
-  let filtered = tourists.value
-
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    filtered = filtered.filter(t =>
-      t.full_name.toLowerCase().includes(query) ||
-      t.email.toLowerCase().includes(query) ||
-      (t.phone && t.phone.includes(query))
-    )
-  }
-
-  if (statusFilter.value === 'active') {
-    filtered = filtered.filter(t => t.is_active)
-  } else if (statusFilter.value === 'inactive') {
-    filtered = filtered.filter(t => !t.is_active)
-  }
-
-  return filtered
-})
-
-const paginatedTourists = computed(() => {
-  const start = (currentPage.value - 1) * pageSize
-  const end = start + pageSize
-  return filteredTourists.value.slice(start, end)
-})
-
-const visiblePages = computed(() => {
-  const pages = []
-  const maxPages = 5
-  let startPage = Math.max(1, currentPage.value - Math.floor(maxPages / 2))
-  let endPage = Math.min(totalPages.value, startPage + maxPages - 1)
-
-  if (endPage - startPage + 1 < maxPages) {
-    startPage = Math.max(1, endPage - maxPages + 1)
-  }
-
-  for (let i = startPage; i <= endPage; i++) {
-    pages.push(i)
-  }
-  return pages
-})
+const totalPages = computed(() => Math.max(1, Math.ceil(totalTourists.value / pageSize)))
+const pageStart = computed(() => (totalTourists.value === 0 ? 0 : (currentPage.value - 1) * pageSize + 1))
+const pageEnd = computed(() => (totalTourists.value === 0 ? 0 : Math.min(currentPage.value * pageSize, totalTourists.value)))
 
 const formatDate = (date) => {
   if (!date) return ''
@@ -323,10 +277,28 @@ const fetchTourists = async () => {
   try {
     loading.value = true
     const token = localStorage.getItem('adminToken')
-    const response = await api.get('/admin/tourists?skip=0&limit=1000', {
+    const currentCursor = pageCursors.value[currentPage.value - 1]
+    const response = await api.get('/admin/tourists', {
+      params: {
+        limit: pageSize,
+        cursor: currentCursor || undefined,
+        search: searchQuery.value.trim(),
+        status_filter: statusFilter.value || undefined
+      },
       headers: { Authorization: `Bearer ${token}` }
     })
     tourists.value = response.data.tourists || []
+    totalTourists.value = response.data.pagination?.total_items || 0
+    pagination.value = {
+      totalPages: response.data.pagination?.total_pages || 1,
+      hasMore: Boolean(response.data.pagination?.has_more)
+    }
+    if (pageCursors.value.length === currentPage.value) {
+      pageCursors.value.push(response.data.pagination?.next_cursor || null)
+    } else {
+      pageCursors.value[currentPage.value] = response.data.pagination?.next_cursor || null
+    }
+    pageCursors.value = pageCursors.value.slice(0, currentPage.value + 1)
   } catch (error) {
     console.error('Error fetching tourists:', error)
   } finally {
@@ -334,8 +306,19 @@ const fetchTourists = async () => {
   }
 }
 
-const handleSearch = () => {
+const resetPagination = () => {
   currentPage.value = 1
+  pageCursors.value = [null]
+}
+
+const handleSearch = () => {
+  resetPagination()
+  fetchTourists()
+}
+
+const handleFilterChange = () => {
+  resetPagination()
+  fetchTourists()
 }
 
 const viewTourist = async (tourist) => {
@@ -360,7 +343,7 @@ const suspendTourist = (tourist) => {
       await api.post(`/admin/users/${tourist._id}/suspend`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       })
-      tourist.is_active = false
+        await fetchTourists()
       showConfirmDialog.value = false
     } catch (error) {
       console.error('Error suspending tourist:', error)
@@ -378,7 +361,7 @@ const activateTourist = (tourist) => {
       await api.post(`/admin/users/${tourist._id}/activate`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       })
-      tourist.is_active = true
+        await fetchTourists()
       showConfirmDialog.value = false
     } catch (error) {
       console.error('Error activating tourist:', error)
@@ -396,7 +379,11 @@ const deleteTourist = (tourist) => {
       await api.delete(`/admin/users/${tourist._id}`, {
         headers: { Authorization: `Bearer ${token}` }
       })
-      tourists.value = tourists.value.filter(t => t._id !== tourist._id)
+        if (tourists.value.length === 1 && currentPage.value > 1) {
+          currentPage.value -= 1
+          pageCursors.value = pageCursors.value.slice(0, currentPage.value + 1)
+        }
+        await fetchTourists()
       showConfirmDialog.value = false
     } catch (error) {
       console.error('Error deleting tourist:', error)
@@ -422,15 +409,17 @@ const closeModal = () => {
 }
 
 const previousPage = () => {
-  if (currentPage.value > 1) currentPage.value--
+  if (currentPage.value > 1) {
+    currentPage.value--
+    fetchTourists()
+  }
 }
 
 const nextPage = () => {
-  if (currentPage.value < totalPages.value) currentPage.value++
-}
-
-const goToPage = (page) => {
-  currentPage.value = page
+  if (pagination.value.hasMore) {
+    currentPage.value++
+    fetchTourists()
+  }
 }
 
 onMounted(() => {

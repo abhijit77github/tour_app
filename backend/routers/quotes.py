@@ -1,13 +1,398 @@
-from datetime import datetime, timezone
+import base64
+from datetime import datetime, timedelta, timezone
+import json
+import re
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from ..database import get_database
 from ..models.quote import QuoteRequestCreate, QuoteResponseCreate
-from ..routers.auth import get_current_user
+from ..routers.auth import get_current_operator_access_context, get_current_user
+from ..utils.cursor_pagination import build_desc_created_cursor_match, decode_datetime_objectid_cursor, encode_datetime_objectid_cursor
 
 router = APIRouter(prefix="/quotes", tags=["Quotes"])
+
+SUPPORTED_QUOTE_SORTS = ("newest", "unresponded_first", "highest_budget", "travel_soonest")
+QUOTE_BUDGET_BANDS = ("budget", "mid", "premium")
+QUOTE_TRAVEL_WINDOW_FILTERS = ("all", "next_30_days", "days_31_90", "days_90_plus", "unspecified")
+UNSPECIFIED_TRAVEL_DATE = datetime(9999, 12, 31, tzinfo=timezone.utc)
+
+
+def _normalize_quote_filter_now(now: datetime | None = None) -> datetime:
+    base_now = now or datetime.now(timezone.utc)
+    if base_now.tzinfo is None:
+        base_now = base_now.replace(tzinfo=timezone.utc)
+    return base_now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _build_quote_budget_band_expression(field_name: str = "$budget") -> dict:
+    return {
+        "$switch": {
+            "branches": [
+                {
+                    "case": {
+                        "$and": [
+                            {"$ne": [{"$ifNull": [field_name, None]}, None]},
+                            {"$lt": [field_name, 20000]},
+                        ]
+                    },
+                    "then": "budget",
+                },
+                {
+                    "case": {
+                        "$and": [
+                            {"$ne": [{"$ifNull": [field_name, None]}, None]},
+                            {"$lt": [field_name, 50000]},
+                        ]
+                    },
+                    "then": "mid",
+                },
+                {
+                    "case": {"$ne": [{"$ifNull": [field_name, None]}, None]},
+                    "then": "premium",
+                },
+            ],
+            "default": None,
+        }
+    }
+
+
+def _build_quote_budget_match(budget_band: str) -> dict:
+    if budget_band == "budget":
+        return {"budget": {"$lt": 20000}}
+    if budget_band == "mid":
+        return {"budget": {"$gte": 20000, "$lt": 50000}}
+    if budget_band == "premium":
+        return {"budget": {"$gte": 50000}}
+    return {}
+
+
+def _build_quote_travel_window_bucket_expression(*, now: datetime) -> dict:
+    next_30_days = now + timedelta(days=30)
+    next_90_days = now + timedelta(days=90)
+    return {
+        "$switch": {
+            "branches": [
+                {"case": {"$eq": ["$sort_travel_start", UNSPECIFIED_TRAVEL_DATE]}, "then": "unspecified"},
+                {
+                    "case": {
+                        "$and": [
+                            {"$gte": ["$sort_travel_start", now]},
+                            {"$lte": ["$sort_travel_start", next_30_days]},
+                        ]
+                    },
+                    "then": "next_30_days",
+                },
+                {
+                    "case": {
+                        "$and": [
+                            {"$gt": ["$sort_travel_start", next_30_days]},
+                            {"$lte": ["$sort_travel_start", next_90_days]},
+                        ]
+                    },
+                    "then": "days_31_90",
+                },
+                {"case": {"$gt": ["$sort_travel_start", next_90_days]}, "then": "days_90_plus"},
+            ],
+            "default": "unspecified",
+        }
+    }
+
+
+def _build_quote_travel_normalization_stage() -> dict:
+    return {
+        "$addFields": {
+            "sort_travel_start": {
+                "$ifNull": [
+                    "$travel_start_date",
+                    {
+                        "$dateFromString": {
+                            "dateString": {
+                                "$trim": {
+                                    "input": {
+                                        "$arrayElemAt": [
+                                            {"$split": [{"$ifNull": ["$travel_window", ""]}, " to "]},
+                                            0,
+                                        ]
+                                    }
+                                }
+                            },
+                            "timezone": "UTC",
+                            "onError": UNSPECIFIED_TRAVEL_DATE,
+                            "onNull": UNSPECIFIED_TRAVEL_DATE,
+                        }
+                    },
+                ]
+            }
+        }
+    }
+
+
+def _requires_quote_travel_stage(*, sort_mode: str, travel_window: str) -> bool:
+    return sort_mode == "travel_soonest" or travel_window != "all"
+
+
+def _build_quote_travel_window_match(*, travel_window: str, now: datetime) -> dict:
+    next_30_days = now + timedelta(days=30)
+    next_90_days = now + timedelta(days=90)
+
+    if travel_window == "next_30_days":
+        return {"sort_travel_start": {"$gte": now, "$lte": next_30_days}}
+    if travel_window == "days_31_90":
+        return {"sort_travel_start": {"$gt": next_30_days, "$lte": next_90_days}}
+    if travel_window == "days_90_plus":
+        return {"sort_travel_start": {"$gt": next_90_days, "$lt": UNSPECIFIED_TRAVEL_DATE}}
+    if travel_window == "unspecified":
+        return {"sort_travel_start": UNSPECIFIED_TRAVEL_DATE}
+    return {}
+
+
+def _build_quote_filter_option_labels() -> dict:
+    return {
+        "budget": {
+            "budget": "Budget under 20k",
+            "mid": "Mid 20k-50k",
+            "premium": "Premium 50k+",
+        },
+        "travel_window": {
+            "next_30_days": "Next 30 days",
+            "days_31_90": "1 to 3 months",
+            "days_90_plus": "Later than 3 months",
+            "unspecified": "Flexible or unspecified",
+        },
+    }
+
+
+def _parse_quote_travel_start_date(travel_window) -> datetime | None:
+    if not travel_window:
+        return None
+
+    if isinstance(travel_window, dict):
+        start_candidate = travel_window.get("start_date") or travel_window.get("from")
+    else:
+        start_candidate = str(travel_window).split(" to ", 1)[0].strip()
+
+    if not start_candidate:
+        return None
+
+    normalized = start_candidate.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        try:
+            parsed = datetime.strptime(start_candidate, "%Y-%m-%d")
+        except ValueError:
+            return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _build_operator_quote_inbox_query(
+    *,
+    operator_profile_id: str,
+    status_filter: str,
+    search: str | None,
+    location_filter: str | None,
+    budget_band: str,
+) -> dict:
+    query: dict = {"status": {"$ne": "closed"}}
+
+    if status_filter == "responded":
+        query["responses.operator_id"] = operator_profile_id
+    elif status_filter == "new":
+        query["responses"] = {"$not": {"$elemMatch": {"operator_id": operator_profile_id}}}
+
+    normalized_search = (search or "").strip()
+    if normalized_search:
+        escaped_query = re.escape(normalized_search[:80])
+        query["$or"] = [
+            {"tourist_name": {"$regex": escaped_query, "$options": "i"}},
+            {"notes": {"$regex": escaped_query, "$options": "i"}},
+            {"preferences": {"$regex": escaped_query, "$options": "i"}},
+            {"locations.name": {"$regex": escaped_query, "$options": "i"}},
+            {"locations.state": {"$regex": escaped_query, "$options": "i"}},
+            {"locations.country": {"$regex": escaped_query, "$options": "i"}},
+        ]
+
+    normalized_location = (location_filter or "").strip()
+    if normalized_location:
+        query["locations"] = {
+            "$elemMatch": {
+                "name": {
+                    "$regex": f"^{re.escape(normalized_location[:80])}$",
+                    "$options": "i",
+                }
+            }
+        }
+
+    query.update(_build_quote_budget_match(budget_band))
+
+    return query
+
+
+def _build_operator_quote_sort_spec(sort_mode: str) -> list[tuple[str, int]]:
+    if sort_mode == "unresponded_first":
+        return [("sort_responded_rank", 1), ("created_at", -1), ("_id", -1)]
+    if sort_mode == "highest_budget":
+        return [("sort_budget", -1), ("created_at", -1), ("_id", -1)]
+    if sort_mode == "travel_soonest":
+        return [("sort_travel_start", 1), ("created_at", -1), ("_id", -1)]
+    return [("created_at", -1), ("_id", -1)]
+
+
+def _encode_quote_inbox_cursor(*, sort_mode: str, row: dict) -> str:
+    payload = {
+        "sort_mode": sort_mode,
+        "created_at": row["created_at"].isoformat(),
+        "object_id": str(row["_id"]),
+    }
+    if sort_mode == "unresponded_first":
+        payload["responded_rank"] = row.get("sort_responded_rank", 1)
+    elif sort_mode == "highest_budget":
+        payload["budget"] = row.get("sort_budget", 0)
+    elif sort_mode == "travel_soonest":
+        payload["travel_start"] = row.get("sort_travel_start").isoformat() if row.get("sort_travel_start") else None
+    return base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("ascii")
+
+
+def _decode_quote_inbox_cursor(cursor: str) -> dict:
+    decoded = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+    payload = json.loads(decoded)
+    payload["created_at"] = datetime.fromisoformat(payload["created_at"])
+    payload["object_id"] = ObjectId(payload["object_id"])
+    if payload["created_at"].tzinfo is None:
+        payload["created_at"] = payload["created_at"].replace(tzinfo=timezone.utc)
+    if payload.get("travel_start"):
+        payload["travel_start"] = datetime.fromisoformat(payload["travel_start"])
+        if payload["travel_start"].tzinfo is None:
+            payload["travel_start"] = payload["travel_start"].replace(tzinfo=timezone.utc)
+    return payload
+
+
+def _build_quote_inbox_cursor_match(*, sort_mode: str, cursor_payload: dict) -> dict:
+    created_at = cursor_payload["created_at"]
+    object_id = cursor_payload["object_id"]
+
+    if sort_mode == "unresponded_first":
+        responded_rank = cursor_payload.get("responded_rank", 1)
+        return {
+            "$or": [
+                {"sort_responded_rank": {"$gt": responded_rank}},
+                {"sort_responded_rank": responded_rank, "created_at": {"$lt": created_at}},
+                {"sort_responded_rank": responded_rank, "created_at": created_at, "_id": {"$lt": object_id}},
+            ]
+        }
+
+    if sort_mode == "highest_budget":
+        budget = cursor_payload.get("budget", 0)
+        return {
+            "$or": [
+                {"sort_budget": {"$lt": budget}},
+                {"sort_budget": budget, "created_at": {"$lt": created_at}},
+                {"sort_budget": budget, "created_at": created_at, "_id": {"$lt": object_id}},
+            ]
+        }
+
+    if sort_mode == "travel_soonest":
+        travel_start = cursor_payload.get("travel_start")
+        if travel_start is None:
+            return {
+                "$or": [
+                    {"sort_travel_start": None, "created_at": {"$lt": created_at}},
+                    {"sort_travel_start": None, "created_at": created_at, "_id": {"$lt": object_id}},
+                ]
+            }
+        return {
+            "$or": [
+                {"sort_travel_start": {"$gt": travel_start}},
+                {"sort_travel_start": travel_start, "created_at": {"$lt": created_at}},
+                {"sort_travel_start": travel_start, "created_at": created_at, "_id": {"$lt": object_id}},
+            ]
+        }
+
+    return build_desc_created_cursor_match(created_at=created_at, object_id=object_id)
+
+
+def _build_quote_inbox_pipeline(
+    *,
+    query: dict,
+    operator_profile_id: str,
+    sort_mode: str,
+    page_size: int,
+    cursor: str | None,
+    travel_window: str,
+) -> list[dict]:
+    pipeline: list[dict] = [{"$match": query}]
+    normalized_now = _normalize_quote_filter_now()
+
+    if _requires_quote_travel_stage(sort_mode=sort_mode, travel_window=travel_window):
+        pipeline.append(_build_quote_travel_normalization_stage())
+        travel_window_match = _build_quote_travel_window_match(travel_window=travel_window, now=normalized_now)
+        if travel_window_match:
+            pipeline.append({"$match": travel_window_match})
+
+    if sort_mode == "unresponded_first":
+        pipeline.append(
+            {
+                "$addFields": {
+                    "sort_responded_rank": {
+                        "$cond": [
+                            {
+                                "$gt": [
+                                    {
+                                        "$size": {
+                                            "$filter": {
+                                                "input": {"$ifNull": ["$responses", []]},
+                                                "as": "response",
+                                                "cond": {"$eq": ["$$response.operator_id", operator_profile_id]},
+                                            }
+                                        }
+                                    },
+                                    0,
+                                ]
+                            },
+                            1,
+                            0,
+                        ]
+                    }
+                }
+            }
+        )
+    elif sort_mode == "highest_budget":
+        pipeline.append({"$addFields": {"sort_budget": {"$ifNull": ["$budget", 0]}}})
+
+    if cursor:
+        cursor_payload = _decode_quote_inbox_cursor(cursor)
+        if cursor_payload.get("sort_mode") != sort_mode:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cursor sort mode mismatch")
+        pipeline.append({"$match": _build_quote_inbox_cursor_match(sort_mode=sort_mode, cursor_payload=cursor_payload)})
+
+    pipeline.extend([
+        {"$sort": dict(_build_operator_quote_sort_spec(sort_mode))},
+        {"$limit": page_size + 1},
+    ])
+    return pipeline
+
+
+def _build_itinerary_snapshot(doc: dict) -> dict:
+    return {
+        "id": str(doc["_id"]),
+        "title": doc.get("title"),
+        "summary": doc.get("summary"),
+        "primary_location": doc.get("primary_location"),
+        "route_locations": doc.get("route_locations", []),
+        "duration_days": doc.get("duration_days"),
+        "trip_styles": doc.get("trip_styles", []),
+        "travelers": doc.get("travelers"),
+        "budget_band": doc.get("budget_band"),
+        "notes": doc.get("notes"),
+        "days": doc.get("days", []),
+        "source_type": doc.get("source_type"),
+        "source_template_ids": doc.get("source_template_ids", []),
+    }
 
 
 def _serialize_quote(doc, operator_profile_id: str | None = None):
@@ -45,10 +430,31 @@ async def create_quote_request(
 
     db = await get_database()
     payload = quote.model_dump()
+
+    itinerary_id = payload.get("attached_itinerary_id")
+    if itinerary_id:
+        try:
+            itinerary = await db.tourist_itineraries.find_one({
+                "_id": ObjectId(itinerary_id),
+                "tourist_id": str(current_user["_id"]),
+                "shareable_to_quote": True,
+            })
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid attached itinerary ID") from exc
+
+        if not itinerary:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Attached itinerary not found or not shareable",
+            )
+
+        payload["attached_itinerary_snapshot"] = _build_itinerary_snapshot(itinerary)
+
     payload["tourist_id"] = str(current_user["_id"])
     payload["tourist_name"] = current_user.get("full_name")
     payload["status"] = "open"
     payload["responses"] = []
+    payload["travel_start_date"] = _parse_quote_travel_start_date(payload.get("travel_window"))
     payload["created_at"] = datetime.now(timezone.utc)
     payload["updated_at"] = datetime.now(timezone.utc)
 
@@ -71,38 +477,212 @@ async def get_my_quote_requests(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/inbox")
-async def get_operator_quote_inbox(current_user: dict = Depends(get_current_user)):
-    if current_user["user_type"] != "operator":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only operators can view quote inbox")
-
+async def get_operator_quote_inbox(
+    cursor: str | None = None,
+    page_size: int = Query(default=12, ge=1, le=100),
+    status_filter: str = Query(default="all", pattern="^(all|new|responded)$"),
+    search: str | None = Query(default=None, max_length=80),
+    location: str | None = Query(default=None, max_length=80),
+    budget_band: str = Query(default="all", pattern="^(all|budget|mid|premium)$"),
+    travel_window: str = Query(default="all", pattern="^(all|next_30_days|days_31_90|days_90_plus|unspecified)$"),
+    sort_mode: str = Query(default="newest", pattern="^(newest|unresponded_first|highest_budget|travel_soonest)$"),
+    access_context: dict = Depends(get_current_operator_access_context),
+):
     db = await get_database()
-    operator_profile = await db.operator_profiles.find_one({"user_id": str(current_user["_id"])})
-    if not operator_profile:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Operator profile not found")
-
+    operator_profile = access_context["operator_profile"]
     operator_profile_id = str(operator_profile["_id"])
 
+    summary_query = {"status": {"$ne": "closed"}}
+    total_items = await db.quote_requests.count_documents(summary_query)
+    responded_items = await db.quote_requests.count_documents(
+        {
+            **summary_query,
+            "responses.operator_id": operator_profile_id,
+        }
+    )
+    new_items = max(total_items - responded_items, 0)
+    filtered_query = _build_operator_quote_inbox_query(
+        operator_profile_id=operator_profile_id,
+        status_filter=status_filter,
+        search=search,
+        location_filter=location,
+        budget_band=budget_band,
+    )
+    if _requires_quote_travel_stage(sort_mode=sort_mode, travel_window=travel_window):
+        count_pipeline = [
+            {"$match": filtered_query},
+            _build_quote_travel_normalization_stage(),
+        ]
+        travel_window_match = _build_quote_travel_window_match(
+            travel_window=travel_window,
+            now=_normalize_quote_filter_now(),
+        )
+        if travel_window_match:
+            count_pipeline.append({"$match": travel_window_match})
+        count_pipeline.append({"$count": "count"})
+        count_rows = await db.quote_requests.aggregate(count_pipeline).to_list(length=1)
+        filtered_total_items = count_rows[0]["count"] if count_rows else 0
+    else:
+        filtered_total_items = await db.quote_requests.count_documents(filtered_query)
+
     quotes = []
-    cursor = db.quote_requests.find({"status": {"$ne": "closed"}}).sort("created_at", -1)
-    async for q in cursor:
+    try:
+        pipeline = _build_quote_inbox_pipeline(
+            query=filtered_query,
+            operator_profile_id=operator_profile_id,
+            sort_mode=sort_mode,
+            page_size=page_size,
+            cursor=cursor,
+            travel_window=travel_window,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from exc
+    rows = await db.quote_requests.aggregate(pipeline).to_list(length=page_size + 1)
+    has_more = len(rows) > page_size
+    rows = rows[:page_size]
+    next_cursor = None
+    if has_more and rows:
+        last_row = rows[-1]
+        next_cursor = _encode_quote_inbox_cursor(sort_mode=sort_mode, row=last_row)
+
+    for q in rows:
+        q.pop("sort_responded_rank", None)
+        q.pop("sort_budget", None)
+        q.pop("sort_travel_start", None)
         quotes.append(_serialize_quote(q, operator_profile_id=operator_profile_id))
 
-    return {"quotes": quotes, "count": len(quotes)}
+    return {
+        "quotes": quotes,
+        "count": len(quotes),
+        "summary": {
+            "total_items": total_items,
+            "new_items": new_items,
+            "responded_items": responded_items,
+        },
+        "pagination": {
+            "page_size": page_size,
+            "total_items": filtered_total_items,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+            "sort_mode": sort_mode,
+        },
+    }
+
+
+@router.get("/inbox/filter-options")
+async def get_operator_quote_inbox_filter_options(
+    status_filter: str = Query(default="all", pattern="^(all|new|responded)$"),
+    search: str | None = Query(default=None, max_length=80),
+    access_context: dict = Depends(get_current_operator_access_context),
+):
+    db = await get_database()
+    operator_profile_id = str(access_context["operator_profile"]["_id"])
+    base_query = _build_operator_quote_inbox_query(
+        operator_profile_id=operator_profile_id,
+        status_filter=status_filter,
+        search=search,
+        location_filter=None,
+        budget_band="all",
+    )
+    normalized_now = _normalize_quote_filter_now()
+    label_maps = _build_quote_filter_option_labels()
+
+    pipeline = [
+        {"$match": base_query},
+        _build_quote_travel_normalization_stage(),
+        {
+            "$addFields": {
+                "filter_budget_band": _build_quote_budget_band_expression(),
+                "filter_travel_window": _build_quote_travel_window_bucket_expression(now=normalized_now),
+            }
+        },
+        {
+            "$facet": {
+                "locations": [
+                    {"$unwind": "$locations"},
+                    {"$match": {"locations.name": {"$type": "string", "$ne": ""}}},
+                    {"$group": {"_id": "$locations.name", "count": {"$sum": 1}}},
+                    {"$sort": {"count": -1, "_id": 1}},
+                    {"$limit": 20},
+                ],
+                "budget_bands": [
+                    {"$group": {"_id": "$filter_budget_band", "count": {"$sum": 1}}},
+                    {"$sort": {"_id": 1}},
+                ],
+                "travel_windows": [
+                    {"$group": {"_id": "$filter_travel_window", "count": {"$sum": 1}}},
+                    {"$sort": {"_id": 1}},
+                ],
+            }
+        },
+    ]
+    rows = await db.quote_requests.aggregate(pipeline).to_list(length=1)
+    facets = rows[0] if rows else {}
+
+    return {
+        "filters": {
+            "locations": [
+                {
+                    "value": row["_id"],
+                    "label": row["_id"],
+                    "count": row["count"],
+                }
+                for row in facets.get("locations", [])
+                if row.get("_id")
+            ],
+            "budget_bands": [
+                {
+                    "value": band,
+                    "label": label_maps["budget"][band],
+                    "count": next((row["count"] for row in facets.get("budget_bands", []) if row.get("_id") == band), 0),
+                }
+                for band in QUOTE_BUDGET_BANDS
+            ],
+            "travel_windows": [
+                {
+                    "value": travel_key,
+                    "label": label_maps["travel_window"][travel_key],
+                    "count": next((row["count"] for row in facets.get("travel_windows", []) if row.get("_id") == travel_key), 0),
+                }
+                for travel_key in QUOTE_TRAVEL_WINDOW_FILTERS
+                if travel_key != "all"
+            ],
+        }
+    }
+
+
+@router.get("/{quote_id}")
+async def get_operator_quote_detail(
+    quote_id: str,
+    access_context: dict = Depends(get_current_operator_access_context),
+):
+    db = await get_database()
+    operator_profile_id = str(access_context["operator_profile"]["_id"])
+
+    try:
+        quote = await db.quote_requests.find_one({
+            "_id": ObjectId(quote_id),
+            "status": {"$ne": "closed"},
+        })
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid quote ID") from exc
+
+    if not quote:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
+
+    return {"quote": _serialize_quote(quote, operator_profile_id=operator_profile_id)}
 
 
 @router.post("/{quote_id}/respond", status_code=status.HTTP_201_CREATED)
 async def respond_to_quote(
     quote_id: str,
     response: QuoteResponseCreate,
-    current_user: dict = Depends(get_current_user)
+    access_context: dict = Depends(get_current_operator_access_context)
 ):
-    if current_user["user_type"] != "operator":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only operators can respond")
-
     db = await get_database()
-    operator_profile = await db.operator_profiles.find_one({"user_id": str(current_user["_id"])})
-    if not operator_profile:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Operator profile not found")
+    operator_profile = access_context["operator_profile"]
 
     try:
         quote = await db.quote_requests.find_one({"_id": ObjectId(quote_id)})
@@ -117,10 +697,12 @@ async def respond_to_quote(
 
     response_entry = {
         "operator_id": str(operator_profile["_id"]),
-        "operator_user_id": str(current_user["_id"]),
+        "operator_user_id": str(access_context["principal"]["_id"]),
+        "organization_id": access_context["organization"]["_id"],
         "operator_name": operator_profile.get("business_name"),
         "amount": response.amount,
         "message": response.message,
+        "proposed_itinerary_snapshot": response.proposed_itinerary_snapshot.model_dump() if response.proposed_itinerary_snapshot else None,
         "created_at": datetime.now(timezone.utc)
     }
 
@@ -159,6 +741,63 @@ async def close_quote_request(quote_id: str, current_user: dict = Depends(get_cu
     )
 
     return {"message": "Quote closed"}
+
+
+@router.post("/{quote_id}/responses/{response_index}/save-itinerary", status_code=status.HTTP_201_CREATED)
+async def save_response_itinerary(
+    quote_id: str,
+    response_index: int,
+    current_user: dict = Depends(get_current_user),
+):
+    if current_user["user_type"] != "tourist":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only tourists can save itinerary proposals")
+
+    db = await get_database()
+    try:
+        quote = await db.quote_requests.find_one({"_id": ObjectId(quote_id)})
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid quote ID")
+
+    if not quote:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
+
+    if quote.get("tourist_id") != str(current_user["_id"]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to save this itinerary")
+
+    responses = quote.get("responses") or []
+    if response_index < 0 or response_index >= len(responses):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote response not found")
+
+    response_entry = responses[response_index]
+    proposal = response_entry.get("proposed_itinerary_snapshot")
+    if not proposal:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This response does not include an itinerary proposal")
+
+    source_template_id = proposal.get("source_template_id")
+    now = datetime.now(timezone.utc)
+    document = {
+        "tourist_id": str(current_user["_id"]),
+        "title": proposal.get("title"),
+        "summary": proposal.get("summary"),
+        "primary_location": proposal.get("primary_location"),
+        "route_locations": proposal.get("route_locations", []),
+        "duration_days": proposal.get("duration_days"),
+        "trip_styles": proposal.get("trip_styles", []),
+        "travelers": proposal.get("travelers"),
+        "budget_band": proposal.get("budget_band"),
+        "notes": proposal.get("notes"),
+        "days": proposal.get("days", []),
+        "status": "saved",
+        "source_type": "operator_proposed",
+        "source_template_ids": [source_template_id] if source_template_id else [],
+        "shareable_to_quote": True,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    result = await db.tourist_itineraries.insert_one(document)
+    document["_id"] = str(result.inserted_id)
+    return {"message": "Itinerary saved from operator response", "itinerary": document}
 
 @router.get("/search/locations")
 async def search_operator_locations(query: str):
