@@ -219,11 +219,21 @@
               v-if="canAccess('admin.settings.manage')"
               to="/admin/settings"
               class="nav-item"
-              :class="{ active: $route.path.includes('settings') }"
+              :class="{ active: $route.path.includes('settings') && !$route.path.includes('quote-limits') }"
               @click="sidebarOpen = false"
             >
               <span class="nav-icon">⚙️</span>
               <span class="nav-label">Settings</span>
+            </router-link>
+            <router-link
+              v-if="canAccess('admin.settings.manage')"
+              to="/admin/quote-limits"
+              class="nav-item"
+              :class="{ active: $route.path.includes('quote-limits') }"
+              @click="sidebarOpen = false"
+            >
+              <span class="nav-icon">📊</span>
+              <span class="nav-label">Quote Limits</span>
             </router-link>
             <router-link
               v-if="canAccess('admin.backups.manage')"

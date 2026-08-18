@@ -264,6 +264,12 @@ const routes = [
         meta: { requiresAdmin: true, adminPermission: 'admin.settings.manage' }
       },
       {
+        path: 'quote-limits',
+        name: 'AdminQuoteLimits',
+        component: () => import('../views/AdminQuoteLimits.vue'),
+        meta: { requiresAdmin: true, adminPermission: 'admin.settings.manage' }
+      },
+      {
         path: 'backups',
         name: 'AdminBackups',
         component: () => import('../views/AdminBackups.vue'),

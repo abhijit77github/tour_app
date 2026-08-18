@@ -8,7 +8,7 @@ from .config import settings
 from .database import connect_to_mongo, close_mongo_connection, get_backup_database, get_database
 from .models.billing import DEFAULT_BILLING_PLANS
 from .models.promotion_package import DEFAULT_PROMOTION_PACKAGES
-from .routers import auth, operators, bookings, upload, chat, recommendations, quotes, admin, admin_backups, admin_billing, admin_notifications, user_notifications, tour_planner, operator_billing, operator_promotions, itineraries, access_control, tickets
+from .routers import auth, operators, bookings, upload, chat, recommendations, quotes, admin, admin_backups, admin_billing, admin_notifications, user_notifications, tour_planner, operator_billing, operator_promotions, itineraries, access_control, tickets, admin_config
 from .utils.notification_delivery import notification_worker_loop
 from .utils.authorization import sync_system_roles
 from .utils.backup_manager import BACKUP_TASKS_STATE_KEY, ensure_backup_directories, reconcile_orphaned_jobs
@@ -68,6 +68,8 @@ async def startup_event():
         await db.users.create_index([("user_type", 1), ("created_at", -1)])
         await db.users.create_index([("user_type", 1), ("is_active", 1), ("created_at", -1), ("_id", -1)])
         await db.users.create_index([("user_type", 1), ("created_at", -1), ("_id", -1)])
+        await db.users.create_index("membership_tier")  # For membership tier reporting
+        await db.users.create_index("membership_expires_at")  # For cleanup jobs
         await db.admins.create_index("email", unique=True)
         await db.admins.create_index([("last_login", -1)])
         print("✅ User and admin indexes ensured")
@@ -88,6 +90,7 @@ async def startup_event():
         await db.quote_requests.create_index([("status", 1), ("created_at", -1)])
         await db.quote_requests.create_index([("created_at", -1), ("_id", -1)])
         await db.quote_requests.create_index([("status", 1), ("created_at", -1), ("_id", -1)])
+        await db.quote_requests.create_index([("tourist_id", 1), ("status", 1)])  # For counting open quotes per user
         await db.quote_requests.create_index([("responses.operator_id", 1), ("created_at", -1)])
         await db.operator_itinerary_templates.create_index([("operator_profile_id", 1), ("updated_at", -1), ("_id", -1)])
         await db.operator_itinerary_templates.create_index([("operator_profile_id", 1), ("status", 1), ("updated_at", -1), ("_id", -1)])
@@ -140,6 +143,12 @@ async def startup_event():
         print("✅ Access control indexes ensured")
     except Exception as e:
         print(f"⚠️ Access control index setup may already exist or error occurred: {e}")
+
+    try:
+        await db.system_config.create_index("config_key", unique=True)
+        print("✅ System configuration indexes ensured")
+    except Exception as e:
+        print(f"⚠️ System config index setup may already exist or error occurred: {e}")
 
     try:
         await db.support_tickets.create_index([("created_at", -1), ("_id", -1)])
@@ -342,6 +351,7 @@ app.include_router(admin.router)
 app.include_router(admin_backups.router)
 app.include_router(admin_billing.router)
 app.include_router(admin_notifications.router)
+app.include_router(admin_config.router)
 app.include_router(user_notifications.router)
 app.include_router(operator_billing.router)
 app.include_router(operator_promotions.router)

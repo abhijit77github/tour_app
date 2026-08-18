@@ -1,6 +1,6 @@
 <template>
-  <div class="map-view-container">
-    <div ref="mapContainer" class="map-container" :style="{ height: height }"></div>
+  <div class="map-view-container" :style="{ height: height }">
+    <div ref="mapContainer" class="map-container" :style="{ height: '100%' }"></div>
     
     <div v-if="showCoordinates && selectedLocation" class="coordinates-display">
       <strong>Selected Location:</strong>
@@ -61,63 +61,127 @@ L.Icon.Default.mergeOptions({
 });
 
 onMounted(() => {
-  initializeMap();
+  console.log('MapView mounted, waiting before initializing...');
+  // Delay initialization to ensure container is visible and has dimensions
+  setTimeout(() => {
+    initializeMap();
+  }, 100);
 });
 
 const initializeMap = () => {
-  if (!mapContainer.value) return;
+  if (!mapContainer.value) {
+    console.error('Map container ref is null');
+    return;
+  }
+
+  console.log('Map container dimensions:', {
+    width: mapContainer.value.offsetWidth,
+    height: mapContainer.value.offsetHeight,
+    clientWidth: mapContainer.value.clientWidth,
+    clientHeight: mapContainer.value.clientHeight
+  });
+
+  if (mapContainer.value.offsetHeight === 0) {
+    console.warn('Map container has zero height, retrying...');
+    setTimeout(initializeMap, 200);
+    return;
+  }
 
   // Initialize map
   const initialCenter = props.modelValue 
     ? [props.modelValue.latitude, props.modelValue.longitude]
     : [props.center.lat, props.center.lng];
 
-  map.value = L.map(mapContainer.value).setView(initialCenter, props.zoom);
+  try {
+    map.value = L.map(mapContainer.value).setView(initialCenter, props.zoom);
+    console.log('Map instance created successfully');
 
-  // Add tile layer
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors',
-    maxZoom: 19
-  }).addTo(map.value);
+    // Add tile layer
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors',
+      maxZoom: 19
+    }).addTo(map.value);
 
-  // Add click handler for selection
-  if (props.allowSelection) {
-    map.value.on('click', handleMapClick);
-  }
+    console.log('Tiles added to map');
 
-  // Add existing locations
-  if (props.locations.length > 0) {
-    addLocationMarkers();
-  }
+    // Add click handler for selection
+    if (props.allowSelection) {
+      map.value.on('click', handleMapClick);
+      console.log('Click handler registered for map selection');
+    }
 
-  // Add initial marker if model value exists
-  if (props.modelValue) {
-    addMarker(props.modelValue.latitude, props.modelValue.longitude, 'Selected Location');
+    // Force map to recalculate size after rendering
+    setTimeout(() => {
+      if (map.value) {
+        map.value.invalidateSize();
+        console.log('Map size invalidated');
+      }
+    }, 200);
+
+    // Add existing locations
+    if (props.locations.length > 0) {
+      addLocationMarkers();
+    }
+
+    // Add initial marker if model value exists
+    if (props.modelValue) {
+      addMarker(props.modelValue.latitude, props.modelValue.longitude, 'Selected Location');
+    }
+  } catch (error) {
+    console.error('Error initializing map:', error);
   }
 };
 
 const handleMapClick = (e) => {
   const { lat, lng } = e.latlng;
   selectedLocation.value = { lat, lng };
+  console.log('Map clicked at:', { lat, lng });
+  
+  // Clear existing markers and add new marker at clicked location
+  clearMarkers();
+  addMarker(lat, lng, 'Selected Location', true);
+  
   // Immediately set the model value; saving is handled by parent form
   const coordinates = { latitude: lat, longitude: lng };
   emit('update:modelValue', coordinates);
-  emit('location-selected', coordinates);
+  emit('location-selected', { lat, lng }); // Emit with lat/lng for consistency
 };
 
 const addMarker = (lat, lng, title = '', isSelected = false) => {
-  const icon = isSelected ? L.icon({
-    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-    popupAnchor: [1, -34],
-    shadowSize: [41, 41]
-  }) : null;
+  let icon;
+  
+  if (isSelected) {
+    // Create a custom red marker using SVG data URL
+    const redMarkerSvg = `
+      <svg width="25" height="41" viewBox="0 0 25 41" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12.5 0C5.6 0 0 5.6 0 12.5c0 8.4 12.5 28.5 12.5 28.5S25 20.9 25 12.5C25 5.6 19.4 0 12.5 0z" 
+              fill="#DC2626" stroke="#991B1B" stroke-width="1"/>
+        <circle cx="12.5" cy="12.5" r="4" fill="white"/>
+      </svg>
+    `;
+    const redMarkerUrl = 'data:image/svg+xml;base64,' + btoa(redMarkerSvg);
+    
+    icon = L.icon({
+      iconUrl: redMarkerUrl,
+      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34],
+      shadowSize: [41, 41]
+    });
+  } else {
+    icon = L.icon({
+      iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
+      iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
+      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34],
+      shadowSize: [41, 41]
+    });
+  }
 
-  const options = icon ? { icon } : {};
-
-  const marker = L.marker([lat, lng], options)
+  const marker = L.marker([lat, lng], { icon })
     .addTo(map.value)
     .bindPopup(title);
 
@@ -175,26 +239,40 @@ watch(() => props.modelValue, (newVal) => {
 .map-view-container {
   position: relative;
   width: 100%;
+  height: 100%;
+  min-height: 400px;
+  display: flex;
+  flex-direction: column;
   z-index: 1;
 }
 
 .map-container {
   width: 100%;
-  border-radius: 8px;
+  height: 100%;
+  min-height: 400px;
+  flex: 1;
+  border-radius: 0;
   overflow: hidden;
-  border: 1px solid #ddd;
+  border: none;
   z-index: 1;
+  background: #e5e7eb;
 }
 
 .coordinates-display {
-  margin-top: 10px;
-  padding: 10px;
-  background: #f5f5f5;
-  border-radius: 5px;
+  position: absolute;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.75rem 1.25rem;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   display: flex;
   align-items: center;
-  gap: 15px;
-  flex-wrap: wrap;
+  gap: 0.75rem;
+  z-index: 1000;
+  pointer-events: none;
 }
 
 .coordinates-display strong {

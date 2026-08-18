@@ -76,6 +76,9 @@ class UserInDB(UserBase):
     is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    membership_tier: str = "free"  # free, premium, enterprise
+    membership_started_at: Optional[datetime] = None
+    membership_expires_at: Optional[datetime] = None
     
     class Config:
         populate_by_name = True
@@ -88,6 +91,9 @@ class User(UserBase):
     is_active: bool = True
     created_at: datetime
     updated_at: datetime
+    membership_tier: str = "free"
+    membership_started_at: Optional[datetime] = None
+    membership_expires_at: Optional[datetime] = None
     
     class Config:
         populate_by_name = True

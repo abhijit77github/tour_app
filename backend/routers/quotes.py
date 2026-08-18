@@ -410,6 +410,55 @@ def _serialize_quote(doc, operator_profile_id: str | None = None):
     return doc
 
 
+async def get_user_quote_limit(user_id: str, db) -> dict:
+    """
+    Get user's membership tier and corresponding quote limit.
+    
+    Returns:
+        dict with keys: tier, limit, tier_name
+    """
+    from bson import ObjectId
+    
+    user = await db.users.find_one({"_id": ObjectId(user_id)})
+    if not user:
+        # Default to free tier if user not found
+        return {"tier": "free", "limit": 5, "tier_name": "Free"}
+    
+    tier = user.get("membership_tier", "free")
+    
+    # Check if membership is expired
+    expires_at = user.get("membership_expires_at")
+    if expires_at and isinstance(expires_at, datetime):
+        if expires_at < datetime.now(timezone.utc):
+            tier = "free"  # Downgrade to free if expired
+    
+    # Get limits from system config
+    config = await db.system_config.find_one({"config_key": "quote_limits"})
+    if config and "quote_limits" in config:
+        limits = config["quote_limits"]
+    else:
+        # Default limits if config not found
+        limits = {"free": 5, "premium": 20, "enterprise": 100}
+    
+    limit = limits.get(tier, 5)
+    tier_name = tier.capitalize()
+    
+    return {
+        "tier": tier,
+        "limit": limit,
+        "tier_name": tier_name
+    }
+
+
+def get_upgrade_suggestion(current_tier: str) -> str:
+    """Get suggested upgrade tier for error messages."""
+    if current_tier == "free":
+        return "Premium"
+    elif current_tier == "premium":
+        return "Enterprise"
+    return "a higher tier"
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_quote_request(
     quote: QuoteRequestCreate,
@@ -429,6 +478,22 @@ async def create_quote_request(
             )
 
     db = await get_database()
+    
+    # Check quote limit before proceeding
+    user_limit_info = await get_user_quote_limit(str(current_user["_id"]), db)
+    open_count = await db.quote_requests.count_documents({
+        "tourist_id": str(current_user["_id"]),
+        "status": "open"
+    })
+    
+    if open_count >= user_limit_info["limit"]:
+        upgrade_suggestion = get_upgrade_suggestion(user_limit_info["tier"])
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"You have reached your limit of {user_limit_info['limit']} open quote requests. "
+                   f"Please close or cancel existing quotes, or upgrade to {upgrade_suggestion} for more quotes."
+        )
+    
     payload = quote.model_dump()
 
     itinerary_id = payload.get("attached_itinerary_id")
@@ -464,16 +529,68 @@ async def create_quote_request(
 
 
 @router.get("/my")
-async def get_my_quote_requests(current_user: dict = Depends(get_current_user)):
+async def get_my_quote_requests(
+    current_user: dict = Depends(get_current_user),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(10, ge=1, le=50, description="Number of quotes per page")
+):
+    """
+    Get current user's quote requests with pagination.
+    
+    Returns paginated quotes with metadata about current page, total count, etc.
+    """
     if current_user["user_type"] != "tourist":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only tourists can view their quotes")
 
     db = await get_database()
+    
+    # Calculate skip for pagination
+    skip = (page - 1) * page_size
+    
+    # Get total count
+    total = await db.quote_requests.count_documents({
+        "tourist_id": str(current_user["_id"])
+    })
+    
+    # Get total open quotes count (for quota display)
+    open_count = await db.quote_requests.count_documents({
+        "tourist_id": str(current_user["_id"]),
+        "status": "open"
+    })
+    
+    # Get user's quota information
+    user_limit_info = await get_user_quote_limit(str(current_user["_id"]), db)
+    
+    # Get paginated results
+    cursor = db.quote_requests.find({
+        "tourist_id": str(current_user["_id"])
+    }).sort("created_at", -1).skip(skip).limit(page_size)
+    
     quotes = []
-    cursor = db.quote_requests.find({"tourist_id": str(current_user["_id"])}).sort("created_at", -1)
     async for q in cursor:
         quotes.append(_serialize_quote(q))
-    return {"quotes": quotes, "count": len(quotes)}
+    
+    # Calculate pagination metadata
+    total_pages = (total + page_size - 1) // page_size  # Ceiling division
+    has_more = skip + len(quotes) < total
+    
+    return {
+        "quotes": quotes,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+            "has_more": has_more
+        },
+        "quota": {
+            "open_count": open_count,
+            "limit": user_limit_info["limit"],
+            "tier": user_limit_info["tier"],
+            "tier_name": user_limit_info["tier_name"],
+            "remaining": max(0, user_limit_info["limit"] - open_count)
+        }
+    }
 
 
 @router.get("/inbox")

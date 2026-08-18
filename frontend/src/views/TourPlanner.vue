@@ -1,5 +1,38 @@
 <template>
   <div class="planner-shell">
+    <div class="planner-page-new">
+      
+      <!-- New Header -->
+      <header class="planner-header glass-card">
+        <div class="header-left">
+          <h1 class="planner-title">
+            <span class="title-icon">🧭</span>
+            Tour Planner
+          </h1>
+          <p class="planner-subtitle">AI-powered trip planning</p>
+        </div>
+        <div class="header-right">
+          <QuotaBadge 
+            :quota="plannerQuota" 
+            :loading="plannerQuotaLoading" 
+            :error="plannerQuotaError" 
+          />
+          <router-link to="/cart" class="cart-button">
+            🛒 <span v-if="cartStore.itemCount > 0">({{ cartStore.itemCount }})</span>
+          </router-link>
+        </div>
+      </header>
+
+      <!-- Tab Navigation -->
+      <TabNavigation
+        :activeTab="activeTab"
+        :tabs="tabs"
+        @update:activeTab="activeTab = $event"
+      />
+
+      <!-- OLD CONTENT TEMPORARILY WRAPPED IN FIRST TAB -->
+      <div v-show="activeTab === 'chat'" class="temp-wrapper">
+    
     <div class="planner-page">
       <aside class="planner-sidebar">
         <div class="sidebar-glow"></div>
@@ -287,6 +320,66 @@
             <div class="bubble">
               <span class="msg-role">{{ msg.role === 'user' ? 'You' : 'Tour Planner' }}</span>
               <p class="msg-text" v-html="formatText(msg.text)"></p>
+              
+              <!-- Inline Operator Cards (Sprint 2) -->
+              <div v-if="msg.operators && msg.operators.length" class="inline-operators">
+                <div class="inline-operators-header">
+                  <span class="operators-badge">{{ msg.operators.length }} matches found</span>
+                </div>
+                <div class="inline-operator-grid">
+                  <div 
+                    v-for="op in msg.operators.slice(0, 3)" 
+                    :key="op.id" 
+                    class="inline-op-card"
+                    :class="{ added: addedIds.has(op.id) }"
+                  >
+                    <div class="inline-op-header">
+                      <div class="inline-op-avatar">{{ op.business_name?.charAt(0)?.toUpperCase() }}</div>
+                      <div class="inline-op-info">
+                        <h5>{{ op.business_name }}</h5>
+                        <div class="inline-op-meta">
+                          <span class="op-rating">★ {{ Number(op.average_rating || 0).toFixed(1) }}</span>
+                          <span class="op-score">{{ Number(op.score || 0).toFixed(0) }}% match</span>
+                        </div>
+                      </div>
+                    </div>
+                    <p v-if="op.match_reason" class="inline-op-reason">{{ op.match_reason }}</p>
+                    <div class="inline-op-tags">
+                      <span v-if="op.budget_fit" class="op-tag budget">Budget fit</span>
+                      <span class="op-tag service">{{ op.recommended_service === 'car' ? '🚗 Car' : '🗺️ Tour' }}</span>
+                    </div>
+                    <div class="inline-op-actions">
+                      <button 
+                        v-if="!addedIds.has(op.id)"
+                        class="btn-inline-add" 
+                        :disabled="addingId === op.id"
+                        @click="addToCart(op)"
+                      >
+                        {{ addingId === op.id ? 'Adding...' : 'Add to Cart' }}
+                      </button>
+                      <span v-else class="inline-added">✓ Added</span>
+                      <button class="btn-inline-view" @click="activeTab = 'matches'">
+                        View All
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <p v-if="msg.operators.length > 3" class="inline-operators-more">
+                  + {{ msg.operators.length - 3 }} more in <button @click="activeTab = 'matches'" class="link-button">Matches tab</button>
+                </p>
+              </div>
+
+              <!-- Quick Reply Buttons (Sprint 2) -->
+              <div v-if="msg.quickReplies && msg.quickReplies.length" class="quick-replies">
+                <button 
+                  v-for="(reply, ridx) in msg.quickReplies" 
+                  :key="ridx"
+                  class="quick-reply-btn"
+                  @click="sendQuickReply(reply)"
+                >
+                  {{ reply.icon }} {{ reply.text }}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -300,7 +393,18 @@
 
           <div v-if="statusText && !streamingText" class="status-line">
             <span class="status-dot"></span>
-            <span>{{ statusText }}</span>
+            <span class="status-text">{{ statusText }}</span>
+            <div class="status-progress">
+              <div class="progress-bar" :class="statusProgressClass"></div>
+            </div>
+          </div>
+
+          <!-- Enhanced typing indicator (Sprint 2) -->
+          <div v-if="streaming && !streamingText && !statusText" class="typing-indicator">
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span class="typing-text">Tour Planner is thinking...</span>
           </div>
         </div>
 
@@ -324,13 +428,30 @@
         </form>
       </main>
     </div>
-  </div>
+      
+      </div><!-- end temp-wrapper -->
+      
+      <!-- Placeholder tabs -->
+      <div v-show="activeTab === 'matches'" class="tab-panel">
+        <p style="padding: 40px; text-align: center;">Matches tab coming soon...</p>
+      </div>
+      <div v-show="activeTab === 'itinerary'" class="tab-panel">
+        <p style="padding: 40px; text-align: center;">Itinerary tab coming soon...</p>
+      </div>
+      <div v-show="activeTab === 'requirements'" class="tab-panel">
+        <p style="padding: 40px; text-align: center;">Requirements tab coming soon...</p>
+      </div>
+
+    </div><!-- end planner-page-new -->
+  </div><!-- end planner-shell -->
 </template>
 
 <script setup>
 import { ref, computed, nextTick, onMounted } from 'vue'
 import { v4 as uuidv4 } from 'uuid'
 import StepGuidePanel from '../components/StepGuidePanel.vue'
+import TabNavigation from '../components/TabNavigation.vue'
+import QuotaBadge from '../components/QuotaBadge.vue'
 import api from '../services/api'
 import { useCartStore } from '../stores/cart'
 
@@ -357,6 +478,43 @@ const plannerQuotaError = ref('')
 const messagesEl = ref(null)
 const inputEl = ref(null)
 const cartStore = useCartStore()
+
+// New tab state for refactored layout
+const activeTab = ref('chat')
+
+// Sprint 2: Status progress tracking
+const statusProgressClass = ref('progress-searching')
+
+const tabs = computed(() => [
+  {
+    id: 'chat',
+    label: 'Chat',
+    icon: '💬',
+    count: 0,
+    hasCheck: false
+  },
+  {
+    id: 'matches',
+    label: 'Matches',
+    icon: '📍',
+    count: suggestedOperators.value.length,
+    hasCheck: false
+  },
+  {
+    id: 'itinerary',
+    label: 'Itinerary',
+    icon: '📋',
+    count: itineraryIdeas.value.length,
+    hasCheck: false
+  },
+  {
+    id: 'requirements',
+    label: 'Trip',
+    icon: '⚙️',
+    count: 0,
+    hasCheck: hasRequirements.value
+  }
+])
 
 const hasRequirements = computed(() =>
   requirements.value.locations?.length ||
@@ -482,6 +640,14 @@ async function sendMessage() {
             scrollBottom()
           } else if (event.type === 'status') {
             statusText.value = event.text
+            // Update progress class based on status (Sprint 2)
+            if (event.text.includes('Searching') || event.text.includes('Finding')) {
+              statusProgressClass.value = 'progress-searching'
+            } else if (event.text.includes('Analyzing') || event.text.includes('Matching')) {
+              statusProgressClass.value = 'progress-analyzing'
+            } else if (event.text.includes('Ranking') || event.text.includes('Sorting')) {
+              statusProgressClass.value = 'progress-ranking'
+            }
           } else if (event.type === 'operators') {
             suggestedOperators.value = event.operators
           } else if (event.type === 'itineraries') {
@@ -492,7 +658,14 @@ async function sendMessage() {
             messages.value.push({ role: 'assistant', text: `⚠️ ${event.text}` })
           } else if (event.type === 'done') {
             if (streamingText.value) {
-              messages.value.push({ role: 'assistant', text: streamingText.value })
+              // Create enhanced message with operators and quick replies (Sprint 2)
+              const enhancedMessage = {
+                role: 'assistant',
+                text: streamingText.value,
+                operators: suggestedOperators.value.length > 0 ? [...suggestedOperators.value] : null,
+                quickReplies: generateQuickReplies(streamingText.value, suggestedOperators.value)
+              }
+              messages.value.push(enhancedMessage)
               streamingText.value = ''
             }
             statusText.value = ''
@@ -516,6 +689,43 @@ async function sendMessage() {
 function sendStarter(prompt) {
   input.value = prompt
   sendMessage()
+}
+
+// ─── Quick reply handler (Sprint 2) ──────────────────────────────────────────
+function sendQuickReply(reply) {
+  input.value = reply.message || reply.text
+  sendMessage()
+}
+
+// ─── Generate contextual quick replies (Sprint 2) ────────────────────────────
+function generateQuickReplies(messageText, operators) {
+  const replies = []
+  const text = messageText.toLowerCase()
+  
+  // If operators found, suggest viewing them
+  if (operators && operators.length > 0) {
+    replies.push({ icon: '📍', text: 'View All Matches', message: 'Show me all the matched operators' })
+  }
+  
+  // If no dates mentioned, suggest adding them
+  if (!requirements.value.travel_dates && (text.includes('trip') || text.includes('visit'))) {
+    replies.push({ icon: '📅', text: 'Add Dates', message: 'I want to travel next month' })
+  }
+  
+  // If no budget mentioned
+  if (!requirements.value.budget_usd && operators.length > 0) {
+    replies.push({ icon: '💰', text: 'Set Budget', message: 'My budget is around $500' })
+  }
+  
+  // If requirements exist, offer to refine
+  if (hasRequirements.value) {
+    replies.push({ icon: '🔍', text: 'Refine Search', message: 'Can you find more options?' })
+  }
+  
+  // Always offer to ask more
+  replies.push({ icon: '💬', text: 'Ask More', message: 'Tell me more about the best option' })
+  
+  return replies.slice(0, 4) // Max 4 quick replies
 }
 
 // ─── Quick car mode ───────────────────────────────────────────────────────────
@@ -651,6 +861,88 @@ function formatQuotaReset(value) {
 </script>
 
 <style scoped>
+/* NEW LAYOUT STYLES */
+.planner-page-new {
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.planner-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 28px;
+  border-radius: 16px;
+  margin-bottom: 0;
+}
+
+.header-left {
+  flex: 1;
+}
+
+.planner-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.title-icon {
+  font-size: 28px;
+}
+
+.planner-subtitle {
+  margin: 4px 0 0 40px;
+  font-size: 14px;
+  color: #64748b;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.cart-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  text-decoration: none;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.cart-button:hover {
+  background: white;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.temp-wrapper {
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 16px;
+  padding: 16px;
+}
+
+.tab-panel {
+  background: rgba(255, 255, 255, 0.78);
+  border-radius: 16px;
+  min-height: 400px;
+}
+
+/* ORIGINAL STYLES */
 .planner-shell {
   min-height: calc(100vh - 70px);
   padding: 0.8rem;
