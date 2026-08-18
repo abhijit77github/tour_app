@@ -1940,4 +1940,344 @@ function formatQuotaReset(value) {
     grid-template-columns: 1fr;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SPRINT 2: CHAT ENHANCEMENTS - Inline Operator Cards & Quick Replies
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Inline Operator Cards */
+.inline-operators {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.inline-operators-header {
+  margin-bottom: 12px;
+}
+
+.operators-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  background: linear-gradient(135deg, #0891b2 0%, #0f766e 100%);
+  color: white;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.inline-operator-grid {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.inline-op-card {
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 12px;
+  transition: all 0.2s ease;
+}
+
+.inline-op-card:hover {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(15, 118, 110, 0.3);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.inline-op-card.added {
+  background: rgba(16, 185, 129, 0.05);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.inline-op-header {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.inline-op-avatar {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0891b2 0%, #0f766e 100%);
+  color: white;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.inline-op-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.inline-op-info h5 {
+  margin: 0 0 4px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-op-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.op-rating {
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+.op-score {
+  color: #10b981;
+  font-weight: 600;
+}
+
+.inline-op-reason {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #475569;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.inline-op-tags {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.op-tag {
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.op-tag.budget {
+  background: rgba(139, 92, 246, 0.1);
+  color: #8b5cf6;
+}
+
+.op-tag.service {
+  background: rgba(8, 145, 178, 0.1);
+  color: #0891b2;
+}
+
+.inline-op-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-inline-add {
+  flex: 1;
+  padding: 8px 14px;
+  background: linear-gradient(135deg, #0891b2 0%, #0f766e 100%);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-inline-add:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(8, 145, 178, 0.3);
+}
+
+.btn-inline-add:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.inline-added {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  background: rgba(16, 185, 129, 0.1);
+  border-radius: 8px;
+  color: #10b981;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.btn-inline-view {
+  padding: 8px 14px;
+  background: white;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-inline-view:hover {
+  border-color: rgba(15, 118, 110, 0.4);
+  color: #0f766e;
+}
+
+.inline-operators-more {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+  text-align: center;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #0891b2;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  font-size: inherit;
+}
+
+.link-button:hover {
+  color: #0f766e;
+}
+
+/* Quick Reply Buttons */
+.quick-replies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.quick-reply-btn {
+  padding: 8px 14px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.quick-reply-btn:hover {
+  background: white;
+  border-color: rgba(15, 118, 110, 0.4);
+  color: #0f766e;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+/* Enhanced Status Line */
+.status-line {
+  gap: 8px;
+}
+
+.status-text {
+  font-size: 13px;
+  color: #0891b2;
+  font-weight: 500;
+}
+
+.status-progress {
+  height: 4px;
+  background: rgba(8, 145, 178, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  border-radius: 2px;
+  animation: progress-slide 2s ease-in-out infinite;
+}
+
+.progress-searching {
+  background: linear-gradient(90deg, #0891b2, #0ea5e9);
+  animation-duration: 1.5s;
+}
+
+.progress-analyzing {
+  background: linear-gradient(90deg, #8b5cf6, #a78bfa);
+  animation-duration: 2s;
+}
+
+.progress-ranking {
+  background: linear-gradient(90deg, #10b981, #34d399);
+  animation-duration: 1s;
+}
+
+@keyframes progress-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+/* Typing Indicator */
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 18px;
+  width: fit-content;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.typing-dot {
+  width: 8px;
+  height: 8px;
+  background: #94a3b8;
+  border-radius: 50%;
+  animation: typing-bounce 1.4s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typing-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-10px);
+  }
+}
+
+.typing-text {
+  font-size: 13px;
+  color: #64748b;
+  font-style: italic;
+}
 </style>
