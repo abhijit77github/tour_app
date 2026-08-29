@@ -33,6 +33,13 @@ All project documentation has been organized into **5 main categories** with **2
 └── FOLDER_STRUCTURE.md - This folder's detailed guide
 ```
 
+### Archive (Completed Implementation History)
+
+Completed sprint and phase progress files are archived to keep this directory clean:
+
+- `docs/archive/completed/sprints/`
+- `docs/archive/completed/phases/`
+
 ---
 
 ## 🚀 Quick Links by Role

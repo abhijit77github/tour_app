@@ -11,6 +11,15 @@
 
 All project documentation is organized in this `docs/` folder with clear categorization for easy navigation.
 
+### Archived Completed Implementation Docs
+
+Historical completion/progress files moved out of the top-level docs directory are now stored here:
+
+- `docs/archive/completed/sprints/`
+- `docs/archive/completed/phases/`
+
+Use this archive for past sprint and phase execution history while keeping active docs focused.
+
 ### Folder Organization
 
 ```
@@ -19,6 +28,7 @@ docs/
 ├── phases/            # Phase-specific documentation
 ├── admin/             # Admin dashboard guides
 ├── guides/            # Technical guides & setup
+├── archive/           # Historical completion/progress docs
 └── deployment/        # Deployment & infrastructure
 ```
 
