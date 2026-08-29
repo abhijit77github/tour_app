@@ -59,9 +59,13 @@ Thumbs.db
 # Node / Frontend
 frontend/node_modules/
 frontend/dist/
+frontend/dist-verify/
 frontend/.nuxt/
 frontend/.output/
 frontend/.cache/
+
+# Local toolchain binaries
+.tools/bin/
 
 # Testing
 .pytest_cache/
