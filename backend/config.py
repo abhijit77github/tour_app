@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     billing_search_click_identity_mode: str = "session_first"
     billing_planner_impression_scope: str = "session"
     billing_refund_compensation_mode: str = "manual"
+    billing_roi_baseline_qualified_leads_per_100_credits: float = 10.0
 
     # Payment gateway webhook scaffolding
     razorpay_webhook_secret: Optional[str] = None

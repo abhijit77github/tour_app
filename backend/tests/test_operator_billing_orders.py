@@ -16,14 +16,16 @@ from backend.routers.admin_billing import (
     complete_plan_order,
     expire_stale_orders,
     export_credit_reconciliation_issues,
+    get_billing_roi_baseline_settings,
     get_credit_reconciliation_anomalies,
     get_billing_webhook_event,
     list_billing_webhook_events,
     reconcile_credit_events,
     repair_reconciliation_credit_events,
     reprocess_billing_webhook_event,
+    save_billing_roi_baseline_settings,
 )
-from backend.models.billing import OperatorPlanOrderCreateRequest, PlanOrderPaymentStateUpdateRequest, PlanOrderSettlementRequest, RefundCreditCompensationRequest
+from backend.models.billing import BillingRoiBaselineSettingsUpdate, OperatorPlanOrderCreateRequest, PlanOrderPaymentStateUpdateRequest, PlanOrderSettlementRequest, RefundCreditCompensationRequest
 from backend.utils.billing import assign_plan_to_operator, complete_operator_plan_order, create_operator_plan_order, expire_stale_plan_orders
 
 
@@ -153,13 +155,15 @@ class FakePlanOrdersCollection(FakeCollection):
 
 
 class FakeDB:
-    def __init__(self, *, provider_plans=None, billing_plans=None, plan_orders=None, credit_ledger=None, billing_webhook_events=None, billing_event_log=None):
+    def __init__(self, *, provider_plans=None, billing_plans=None, plan_orders=None, credit_ledger=None, billing_webhook_events=None, billing_event_log=None, admin_settings=None, admin_settings_history=None):
         self.provider_plans = FakeCollection(provider_plans)
         self.billing_plans = FakeCollection(billing_plans)
         self.plan_orders = FakePlanOrdersCollection(plan_orders)
         self.credit_ledger = FakeCollection(credit_ledger)
         self.billing_webhook_events = FakeCollection(billing_webhook_events)
         self.billing_event_log = FakeCollection(billing_event_log)
+        self.admin_settings = FakeCollection(admin_settings)
+        self.admin_settings_history = FakeCollection(admin_settings_history)
 
 
 class OperatorBillingOrderHardeningTests(unittest.IsolatedAsyncioTestCase):
@@ -1450,6 +1454,23 @@ class OperatorBillingOrderHardeningTests(unittest.IsolatedAsyncioTestCase):
         content = response.body.decode("utf-8")
         self.assertIn("row_type,issue_type,operator_profile_id,event_idempotency_key", content)
         self.assertIn("issue,missing_debit,op-23,event-23", content)
+
+    async def test_admin_can_save_and_read_roi_baseline_settings(self):
+        fake_db = FakeDB()
+
+        with patch("backend.routers.admin_billing.get_database", AsyncMock(return_value=fake_db)):
+            save_response = await save_billing_roi_baseline_settings(
+                BillingRoiBaselineSettingsUpdate(qualified_leads_per_100_credits=18.5),
+                admin={"_id": "admin-1"},
+            )
+            read_response = await get_billing_roi_baseline_settings(admin={"_id": "admin-1"})
+
+        self.assertEqual(save_response["message"], "Billing ROI baseline saved")
+        self.assertEqual(save_response["settings"]["source"], "database")
+        self.assertEqual(save_response["settings"]["values"]["qualified_leads_per_100_credits"], 18.5)
+        self.assertEqual(read_response["settings"]["values"]["qualified_leads_per_100_credits"], 18.5)
+        self.assertEqual(len(fake_db.admin_settings.docs), 1)
+        self.assertEqual(len(fake_db.admin_settings_history.docs), 1)
 
 
 if __name__ == "__main__":

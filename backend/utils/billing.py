@@ -12,6 +12,7 @@ from .payment_provider import is_payment_failure_event, is_payment_refund_event,
 
 
 PLANNER_BILLING_SETTINGS_KEY = "planner_billing"
+BILLING_ROI_BASELINE_SETTINGS_KEY = "billing_roi_baseline"
 PLAN_ORDER_OPEN_STATUSES = {
     "pending_payment",
     "payment_pending",
@@ -228,6 +229,65 @@ def get_default_planner_pricing_summary() -> dict:
         "planner_intent_click": settings.planner_intent_click_credits,
         "qualified_lead": settings.planner_qualified_lead_credits,
         "conversion": settings.planner_conversion_credits,
+    }
+
+
+def get_default_billing_roi_baseline_summary() -> dict:
+    return {
+        "qualified_leads_per_100_credits": float(settings.billing_roi_baseline_qualified_leads_per_100_credits),
+    }
+
+
+def _normalize_billing_roi_baseline_value(value: object) -> float:
+    try:
+        return max(min(float(value or 0), 10000.0), 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def get_billing_roi_baseline_summary(db=None) -> dict:
+    baseline = {
+        "qualified_leads_per_100_credits": _normalize_billing_roi_baseline_value(
+            get_default_billing_roi_baseline_summary().get("qualified_leads_per_100_credits")
+        )
+    }
+
+    if db is None or not hasattr(db, "admin_settings"):
+        return baseline
+
+    persisted = await db.admin_settings.find_one({"key": BILLING_ROI_BASELINE_SETTINGS_KEY})
+    persisted_value = (persisted or {}).get("value")
+    if isinstance(persisted_value, dict) and "qualified_leads_per_100_credits" in persisted_value:
+        baseline["qualified_leads_per_100_credits"] = _normalize_billing_roi_baseline_value(
+            persisted_value.get("qualified_leads_per_100_credits")
+        )
+    return baseline
+
+
+async def get_billing_roi_baseline_settings_document(db=None) -> dict:
+    baseline = await get_billing_roi_baseline_summary(db)
+    if db is None or not hasattr(db, "admin_settings"):
+        return {
+            "values": baseline,
+            "source": "environment",
+            "updated_at": None,
+            "updated_by": None,
+        }
+
+    persisted = await db.admin_settings.find_one({"key": BILLING_ROI_BASELINE_SETTINGS_KEY})
+    if not persisted:
+        return {
+            "values": baseline,
+            "source": "environment",
+            "updated_at": None,
+            "updated_by": None,
+        }
+
+    return {
+        "values": baseline,
+        "source": "database",
+        "updated_at": persisted.get("updated_at"),
+        "updated_by": persisted.get("updated_by"),
     }
 
 

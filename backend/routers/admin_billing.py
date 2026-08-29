@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from ..database import get_database
 from ..models.billing import (
+    BillingRoiBaselineSettingsUpdate,
     BillingPlanCreate,
     BillingPlanUpdate,
     CreditAdjustmentRequest,
@@ -19,6 +20,7 @@ from ..models.billing import (
 from ..models.planner_quota import PlannerTouristQuotaSettingsUpdate
 from ..routers.admin import get_current_admin
 from ..utils.billing import (
+    BILLING_ROI_BASELINE_SETTINGS_KEY,
     PLANNER_BILLING_SETTINGS_KEY,
     apply_refund_credit_compensation,
     apply_webhook_event_to_order,
@@ -28,6 +30,7 @@ from ..utils.billing import (
     build_credit_event_reconciliation_report,
     complete_operator_plan_order,
     expire_stale_plan_orders,
+    get_billing_roi_baseline_settings_document,
     get_planner_pricing_settings_document,
     repair_credit_event_mismatches,
 )
@@ -91,8 +94,17 @@ def _serialize_quota_settings(document: dict) -> dict:
         "promotion_reward_daily_credits": 1,
         "promotion_reward_monthly_credits": 2,
     }
+
+
+def _serialize_roi_baseline_settings(document: dict) -> dict:
+    defaults = {
+        "qualified_leads_per_100_credits": 10.0,
+    }
+    values = document.get("values", defaults)
     return {
-        "values": document.get("values", defaults),
+        "values": {
+            "qualified_leads_per_100_credits": float(values.get("qualified_leads_per_100_credits", defaults["qualified_leads_per_100_credits"])),
+        },
         "source": document.get("source", "environment"),
         "updated_at": document.get("updated_at"),
         "updated_by": document.get("updated_by"),
@@ -595,6 +607,70 @@ async def get_planner_pricing_history(
     _ = admin
     rows = []
     cursor = db.admin_settings_history.find({"key": PLANNER_BILLING_SETTINGS_KEY}).sort("changed_at", -1).limit(limit)
+    async for row in cursor:
+        rows.append(_serialize_pricing_history_entry(row))
+    return {"history": rows, "count": len(rows)}
+
+
+@router.get("/roi-baseline")
+async def get_billing_roi_baseline_settings(admin: dict = Depends(get_current_admin)):
+    db = await get_database()
+    _ = admin
+    document = await get_billing_roi_baseline_settings_document(db)
+    return {"settings": _serialize_roi_baseline_settings(document)}
+
+
+@router.post("/roi-baseline")
+async def save_billing_roi_baseline_settings(
+    payload: BillingRoiBaselineSettingsUpdate,
+    admin: dict = Depends(get_current_admin),
+):
+    db = await get_database()
+    now = datetime.now(timezone.utc)
+    value = payload.model_dump()
+    existing = await db.admin_settings.find_one({"key": BILLING_ROI_BASELINE_SETTINGS_KEY})
+    previous_value = (existing or {}).get("value") if isinstance((existing or {}).get("value"), dict) else None
+
+    await db.admin_settings.update_one(
+        {"key": BILLING_ROI_BASELINE_SETTINGS_KEY},
+        {
+            "$set": {
+                "key": BILLING_ROI_BASELINE_SETTINGS_KEY,
+                "value": value,
+                "updated_by": admin.get("_id"),
+                "updated_at": now,
+            }
+        },
+        upsert=True,
+    )
+
+    await db.admin_settings_history.insert_one(
+        {
+            "key": BILLING_ROI_BASELINE_SETTINGS_KEY,
+            "previous_value": previous_value or {"qualified_leads_per_100_credits": 10.0},
+            "new_value": value,
+            "changed_by": admin.get("_id"),
+            "changed_at": now,
+            "change_reason": "billing_roi_baseline_update",
+        }
+    )
+
+    document = await get_billing_roi_baseline_settings_document(db)
+    return {
+        "message": "Billing ROI baseline saved",
+        "settings": _serialize_roi_baseline_settings(document),
+    }
+
+
+@router.get("/roi-baseline/history")
+async def get_billing_roi_baseline_history(
+    limit: int = Query(default=20, ge=1, le=100),
+    admin: dict = Depends(get_current_admin),
+):
+    db = await get_database()
+    _ = admin
+    rows = []
+    cursor = db.admin_settings_history.find({"key": BILLING_ROI_BASELINE_SETTINGS_KEY}).sort("changed_at", -1).limit(limit)
     async for row in cursor:
         rows.append(_serialize_pricing_history_entry(row))
     return {"history": rows, "count": len(rows)}

@@ -194,6 +194,39 @@
                 </div>
               </div>
 
+              <div class="plan-guidance">
+                <h3>How paid plans create business gain</h3>
+                <p>Paid plans keep your distribution active and give predictable credit inventory for billable search and planner surfaces.</p>
+                <div class="journey-chips">
+                  <span class="journey-chip">1. Pick a plan by coverage</span>
+                  <span class="journey-chip">2. Create paid order</span>
+                  <span class="journey-chip">3. Credits activate after settlement</span>
+                </div>
+              </div>
+
+              <div class="plan-value-strip" v-if="planDecisionRows.length">
+                <div class="value-strip-head">
+                  <div>
+                    <strong>Quick compare</strong>
+                    <p class="value-strip-sub">{{ roiBaselineLabel }}</p>
+                  </div>
+                  <span>Based on your recent usage trend</span>
+                </div>
+                <div class="value-pill-row">
+                  <article v-for="row in planDecisionRows" :key="`value-${row.code}`" class="value-pill" :class="{ recommended: row.code === recommendedPlanCode, current: currentPlan?.code === row.code }">
+                    <div class="value-pill-top">
+                      <strong>{{ row.name }}</strong>
+                      <span v-if="row.code === recommendedPlanCode" class="status-chip completed">Recommended</span>
+                      <span v-else-if="currentPlan?.code === row.code" class="status-chip current">Current</span>
+                    </div>
+                    <p>₹{{ formatMoney(row.monthly_price) }} · {{ row.included_credits }} credits · ₹{{ formatMoney(row.cost_per_credit) }}/credit</p>
+                    <small class="roi-small">Est. qualified leads: {{ formatDecimal(row.estimated_qualified_leads, 1) }}/month</small>
+                    <small class="roi-small">Est. cost per qualified lead: ₹{{ row.cost_per_qualified_lead ? formatMoney(row.cost_per_qualified_lead) : '0.00' }}</small>
+                    <small>{{ row.runway_label }}</small>
+                  </article>
+                </div>
+              </div>
+
               <label class="field inline-provider compact-provider">
                 <span>Preferred payment provider for plan purchase</span>
                 <select v-model="selectedPlanProvider">
@@ -213,6 +246,9 @@
                   <div class="plan-meta">
                     <span>{{ plan.included_credits }} credits</span>
                     <span>{{ plan.currency }}</span>
+                    <span v-if="plan.code !== 'FREE'">₹{{ formatMoney(costPerCredit(plan)) }}/credit</span>
+                    <span v-if="plan.code !== 'FREE'">{{ planRunwayLabel(plan) }}</span>
+                    <span v-if="plan.code !== 'FREE'">Est. leads {{ formatDecimal(estimatedQualifiedLeadsForCredits(plan.included_credits), 1) }}/mo</span>
                   </div>
                   <div class="feature-tags">
                     <span v-for="feature in plan.features || []" :key="feature" class="feature-tag">{{ feature }}</span>
@@ -221,7 +257,7 @@
                     <span v-if="plan.code === 'FREE'" class="status-chip current">No purchase required</span>
                     <span v-else-if="hasOpenPlanOrder" class="status-chip pending_payment">Order already open</span>
                     <button v-else class="btn-primary" @click="createPlanOrder(plan.code)" :disabled="requestingPlan === plan.code">
-                      {{ requestingPlan === plan.code ? 'Creating…' : currentPlan?.code === plan.code ? 'Buy again' : 'Create order' }}
+                      {{ requestingPlan === plan.code ? 'Creating…' : currentPlan?.code === plan.code ? 'Buy again' : 'Start paid order' }}
                     </button>
                   </div>
                 </article>
@@ -550,6 +586,65 @@ const hasOpenPlanOrder = computed(() => Boolean(openPlanOrder.value))
 const currentCredits = computed(() => Number(currentSubscription.value?.credits_remaining || 0))
 const totalPurchaseOrders = computed(() => promotionOrdersPagination.value.totalItems + planOrdersPagination.value.totalItems)
 const overviewCount = computed(() => [openPlanOrder.value, currentPlan.value, analytics.value, ledgerEntries.value.length].filter(Boolean).length)
+const usageWindowDays = computed(() => {
+  const dailyRows = analytics.value?.daily || []
+  if (dailyRows.length) return dailyRows.length
+  return 30
+})
+const averageDailyCreditBurn = computed(() => {
+  const consumed = Number(analytics.value?.totals?.credits_consumed || 0)
+  const days = Math.max(1, usageWindowDays.value)
+  return consumed / days
+})
+const qualifiedLeadsPer100Credits = computed(() => {
+  const consumed = Number(analytics.value?.totals?.credits_consumed || 0)
+  const billableEvents = Number(analytics.value?.totals?.billable_events || 0)
+  const configuredFallback = Number(analytics.value?.roi_baseline_qualified_leads_per_100_credits || 10)
+  if (consumed <= 0 || billableEvents <= 0) return configuredFallback
+  return (billableEvents / consumed) * 100
+})
+const roiBaselineLabel = computed(() => {
+  const observed = Number(analytics.value?.totals?.credits_consumed || 0) > 0
+  const baseline = formatDecimal(qualifiedLeadsPer100Credits.value, 1)
+  if (observed) {
+    return `Baseline: ${baseline} qualified leads per 100 credits from your recent billed activity.`
+  }
+  return `Baseline: ${baseline} qualified leads per 100 credits (starter estimate until usage history grows).`
+})
+const planDecisionRows = computed(() => {
+  return (billingPlans.value || [])
+    .filter(plan => plan?.code && plan.code !== 'FREE')
+    .map((plan) => {
+      const credits = Number(plan.included_credits || 0)
+      const price = Number(plan.monthly_price || 0)
+      const perCredit = credits > 0 ? price / credits : 0
+      const estimatedQualifiedLeads = estimatedQualifiedLeadsForCredits(credits)
+      const costPerQualifiedLead = estimatedQualifiedLeads > 0 ? price / estimatedQualifiedLeads : 0
+      const runwayDays = averageDailyCreditBurn.value > 0 && credits > 0
+        ? credits / averageDailyCreditBurn.value
+        : null
+      return {
+        code: plan.code,
+        name: plan.name,
+        monthly_price: price,
+        included_credits: credits,
+        cost_per_credit: perCredit,
+        estimated_qualified_leads: estimatedQualifiedLeads,
+        cost_per_qualified_lead: costPerQualifiedLead,
+        runway_days: runwayDays,
+        runway_label: runwayDays
+          ? `${Math.round(runwayDays)} day coverage at current usage`
+          : 'Runway appears unlimited until burn starts',
+      }
+    })
+})
+const recommendedPlanCode = computed(() => {
+  if (!planDecisionRows.value.length) return ''
+  const targetDays = 30
+  const sorted = [...planDecisionRows.value].sort((a, b) => a.monthly_price - b.monthly_price)
+  const fit = sorted.find(row => Number(row.runway_days || 0) >= targetDays)
+  return (fit || sorted[sorted.length - 1]).code
+})
 const creditSummaryText = computed(() => {
   if (openPlanOrder.value) {
     return 'A paid plan order is open. Your current subscription keeps running until settlement and fulfillment complete.'
@@ -764,6 +859,7 @@ const cancelOrder = async (orderId) => {
 }
 
 const formatMoney = (value) => Number(value || 0).toFixed(2)
+const formatDecimal = (value, digits = 1) => Number(value || 0).toFixed(digits)
 const formatServiceTypes = (types) => (types || []).map(formatServiceType).join(' / ')
 const formatServiceType = (type) => (type === 'car' ? 'Car service' : 'Tour service')
 const formatArea = (area) => [area.area_name, area.state, area.country].filter(Boolean).join(', ')
@@ -777,6 +873,24 @@ const providerLabel = (provider) => {
 const formatDate = (value) => new Date(value).toLocaleString()
 const signedCredits = (value) => `${value > 0 ? '+' : ''}${value}`
 const readableLedgerType = (value) => String(value || '').replaceAll('_', ' ')
+const costPerCredit = (plan) => {
+  const credits = Number(plan?.included_credits || 0)
+  const price = Number(plan?.monthly_price || 0)
+  if (!credits) return 0
+  return price / credits
+}
+const planRunwayLabel = (plan) => {
+  const credits = Number(plan?.included_credits || 0)
+  const burn = Number(averageDailyCreditBurn.value || 0)
+  if (!credits || burn <= 0) return 'Runway updates after usage starts'
+  const days = Math.max(1, Math.round(credits / burn))
+  return `${days} day estimated coverage`
+}
+const estimatedQualifiedLeadsForCredits = (credits) => {
+  const normalizedCredits = Number(credits || 0)
+  if (normalizedCredits <= 0) return 0
+  return (normalizedCredits / 100) * Number(qualifiedLeadsPer100Credits.value || 0)
+}
 
 const changePlanOrdersPage = async (delta) => {
   const nextPage = Math.max(1, planOrdersPage.value + delta)
@@ -1186,6 +1300,128 @@ onMounted(loadAll)
   color: #92400e;
 }
 
+.plan-guidance {
+  margin-bottom: 1rem;
+  padding: 0.9rem 1rem;
+  border-radius: 16px;
+  border: 1px solid #bae6fd;
+  background: linear-gradient(180deg, #f0f9ff, #ecfeff);
+}
+
+.plan-guidance h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 1rem;
+}
+
+.plan-guidance p {
+  margin: 0.45rem 0 0;
+  color: #334155;
+  line-height: 1.5;
+  font-size: 0.86rem;
+}
+
+.journey-chips,
+.value-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.journey-chips {
+  margin-top: 0.75rem;
+}
+
+.journey-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.28rem 0.64rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #0c4a6e;
+  background: rgba(255,255,255,0.9);
+  border: 1px solid #bae6fd;
+}
+
+.plan-value-strip {
+  margin-bottom: 1rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 16px;
+  border: 1px solid #dbeafe;
+  background: #f8fbff;
+}
+
+.value-strip-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.7rem;
+  margin-bottom: 0.65rem;
+}
+
+.value-strip-head strong {
+  color: #0f172a;
+  font-size: 0.9rem;
+}
+
+.value-strip-sub {
+  margin: 0.3rem 0 0;
+  color: #475569;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.value-strip-head span {
+  color: #64748b;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+}
+
+.value-pill {
+  flex: 1 1 220px;
+  border: 1px solid #dbe4ee;
+  border-radius: 14px;
+  background: #fff;
+  padding: 0.72rem 0.75rem;
+}
+
+.value-pill.recommended {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.value-pill.current {
+  border-color: #7dd3fc;
+  background: #f0f9ff;
+}
+
+.value-pill-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.value-pill p,
+.value-pill small {
+  margin: 0.35rem 0 0;
+  color: #475569;
+  line-height: 1.45;
+}
+
+.value-pill small {
+  display: block;
+  font-size: 0.76rem;
+}
+
+.roi-small {
+  color: #334155;
+  font-weight: 600;
+}
+
 .inline-provider {
   margin-top: 1rem;
 }
@@ -1541,6 +1777,11 @@ onMounted(loadAll)
   .tab-button {
     min-width: 0;
     width: 100%;
+  }
+
+  .value-strip-head {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style>

@@ -130,11 +130,20 @@ Current progress notes:
   - added compensation duplicate-attempt telemetry fields on plan orders,
   - added runbook section for reconciliation and compensation retry procedures in payment integration guide,
   - added regression tests for anomaly counter and export behavior.
+  - improved operator paid-plan decision UX in billing console:
+    - added plan purchase journey guidance (choose plan -> create order -> settlement activates credits),
+    - added usage-based quick comparison strip with cost-per-credit and estimated coverage,
+    - added ROI projection hints per paid plan (estimated qualified leads/month and estimated cost per qualified lead from usage baseline),
+    - updated plan CTA copy to emphasize paid-order start flow.
   - integrated Admin Financial UI reconciliation controls:
     - anomaly counters and unresolved-row preview panel,
     - repair trigger action,
     - CSV/JSON export actions,
     - frontend production build verification (`npm run build`) passed.
+  - completed DB-persisted ROI baseline admin control rollout:
+    - added RBAC policy mappings for `/admin/billing/roi-baseline` and `/admin/billing/roi-baseline/history`,
+    - validated Admin Financial -> Planner ROI baseline form visibility in browser,
+    - validated save interaction in browser with success state (`ROI baseline saved`) and source transition to `database` with updated timestamp.
 
 ## Scope Summary
 

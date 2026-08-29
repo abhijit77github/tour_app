@@ -16,6 +16,7 @@ from ..utils.billing import (
     apply_webhook_event_to_order,
     create_operator_plan_order,
     ensure_provider_plan,
+    get_billing_roi_baseline_summary,
     should_auto_apply_refund_compensation,
 )
 from ..utils.cursor_pagination import build_desc_created_cursor_match, decode_datetime_objectid_cursor, encode_datetime_objectid_cursor
@@ -654,10 +655,12 @@ async def get_operator_billing_analytics(
         "credits_consumed": sum(item["credits_consumed"] for item in by_surface),
         "spend_amount": sum(item["spend_amount"] for item in by_surface),
     }
+    roi_baseline = await get_billing_roi_baseline_summary(db)
 
     return {
         "days": days,
         "totals": totals,
         "by_surface": by_surface,
         "daily": daily_rows,
+        "roi_baseline_qualified_leads_per_100_credits": roi_baseline.get("qualified_leads_per_100_credits", 0),
     }

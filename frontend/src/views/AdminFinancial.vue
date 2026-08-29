@@ -181,6 +181,7 @@
               <span class="tag">Search click {{ plannerPricing.search_profile_click }}</span>
               <span class="tag">Planner intent {{ plannerPricing.planner_intent_click }}</span>
               <span class="tag">Template save {{ plannerPricing.conversion }}</span>
+              <span class="tag">ROI baseline {{ formatNumber(roiBaseline.qualified_leads_per_100_credits) }} leads/100 credits</span>
             </div>
 
             <div v-if="plannerPricingWarning" class="state-box warning planner-warning-box">{{ plannerPricingWarning }}</div>
@@ -273,6 +274,32 @@
                   <p class="planner-pricing-meta">
                     Source: {{ billingSummary?.planner?.quota_source || plannerQuotaSettings.source || 'environment' }}
                     <span v-if="plannerQuotaSettings.updated_at"> · Updated {{ formatDateTime(plannerQuotaSettings.updated_at) }}</span>
+                  </p>
+                </form>
+
+                <form class="planner-pricing-form surface-card" @submit.prevent="saveRoiBaseline">
+                  <div class="planner-pricing-head">
+                    <div>
+                      <p class="panel-kicker">ROI baseline control</p>
+                      <h3>Set qualified leads baseline for plan ROI hints</h3>
+                      <p class="planner-pricing-note">Used when operators have low or no usage history. Value is leads expected per 100 credits.</p>
+                    </div>
+                    <div class="planner-pricing-actions">
+                      <button class="btn-secondary" type="button" @click="resetRoiBaseline" :disabled="savingRoiBaseline">Reset</button>
+                      <button class="btn-primary" type="submit" :disabled="savingRoiBaseline">{{ savingRoiBaseline ? 'Saving…' : 'Save ROI baseline' }}</button>
+                    </div>
+                  </div>
+
+                  <div class="planner-pricing-grid">
+                    <label class="field">
+                      <span>Qualified leads per 100 credits</span>
+                      <input v-model.number="roiBaselineForm.qualified_leads_per_100_credits" type="number" min="0" max="10000" step="0.1" required />
+                    </label>
+                  </div>
+
+                  <p class="planner-pricing-meta">
+                    Source: {{ roiBaselineSettings.source || 'environment' }}
+                    <span v-if="roiBaselineSettings.updated_at"> · Updated {{ formatDateTime(roiBaselineSettings.updated_at) }}</span>
                   </p>
                 </form>
               </div>
@@ -791,12 +818,14 @@ const plannerPricingSettings = ref({ values: { search_profile_click: 1, planner_
 const plannerPricingHistory = ref([])
 const plannerQuotaSettings = ref({ values: { daily_limit: 3, monthly_limit: 10, ad_reward_daily_credits: 1, ad_reward_monthly_credits: 1, promotion_reward_daily_credits: 1, promotion_reward_monthly_credits: 2 }, source: 'environment', updated_at: null, updated_by: null })
 const plannerQuotaHistory = ref([])
+const roiBaselineSettings = ref({ values: { qualified_leads_per_100_credits: 10 }, source: 'environment', updated_at: null, updated_by: null })
 const planDrafts = ref({})
 const savingPlanId = ref('')
 const assigningPlan = ref(false)
 const adjustingCredits = ref(false)
 const savingPlannerPricing = ref(false)
 const savingPlannerQuota = ref(false)
+const savingRoiBaseline = ref(false)
 const showPlannerPricingConfirm = ref(false)
 const pendingPlannerPricing = ref({ search_profile_click: 1, planner_intent_click: 0, qualified_lead: 0, conversion: 0 })
 const plansPage = ref(1)
@@ -858,6 +887,10 @@ const plannerQuotaForm = ref({
   ad_reward_monthly_credits: 1,
   promotion_reward_daily_credits: 1,
   promotion_reward_monthly_credits: 2,
+})
+
+const roiBaselineForm = ref({
+  qualified_leads_per_100_credits: 10,
 })
 
 const adminHeaders = computed(() => ({
@@ -923,6 +956,10 @@ const plannerQuota = computed(() => billingSummary.value?.planner?.quota || {
   ad_reward_monthly_credits: 1,
   promotion_reward_daily_credits: 1,
   promotion_reward_monthly_credits: 2,
+})
+
+const roiBaseline = computed(() => roiBaselineSettings.value?.values || {
+  qualified_leads_per_100_credits: 10,
 })
 
 const zeroCreditActiveSubscriptions = computed(() =>
@@ -994,6 +1031,12 @@ const buildPlannerQuotaForm = () => {
   }
 }
 
+const buildRoiBaselineForm = () => {
+  roiBaselineForm.value = {
+    qualified_leads_per_100_credits: Number(roiBaselineSettings.value?.values?.qualified_leads_per_100_credits || 10),
+  }
+}
+
 const totalPagesFor = (items, pageSize) => {
   const totalItems = Array.isArray(items) ? items.length : 0
   return Math.max(1, Math.ceil(totalItems / pageSize))
@@ -1035,7 +1078,7 @@ const loadAll = async () => {
   loading.value = true
   loadError.value = ''
   try {
-    const [plansRes, subscriptionsRes, ledgerRes, eventsRes, summaryRes, pricingRes, historyRes, quotaRes, quotaHistoryRes, quotaLedgerRes, rewardVerificationRes, operatorsRes] = await Promise.all([
+    const [plansRes, subscriptionsRes, ledgerRes, eventsRes, summaryRes, pricingRes, historyRes, quotaRes, quotaHistoryRes, roiBaselineRes, quotaLedgerRes, rewardVerificationRes, operatorsRes] = await Promise.all([
       api.get('/admin/billing/plans', { headers: adminHeaders.value }),
       api.get('/admin/billing/subscriptions', { headers: adminHeaders.value }),
       api.get('/admin/billing/ledger', { headers: adminHeaders.value }),
@@ -1045,6 +1088,7 @@ const loadAll = async () => {
       api.get('/admin/billing/planner-pricing/history', { headers: adminHeaders.value }),
       api.get('/admin/billing/planner-quota', { headers: adminHeaders.value }),
       api.get('/admin/billing/planner-quota/history', { headers: adminHeaders.value }),
+      api.get('/admin/billing/roi-baseline', { headers: adminHeaders.value }),
       api.get('/admin/billing/planner-quota/ledger', { headers: adminHeaders.value }),
       api.get('/admin/billing/planner-quota/reward-verifications', { headers: adminHeaders.value }),
       api.get('/admin/operators?skip=0&limit=200', { headers: adminHeaders.value }),
@@ -1059,6 +1103,7 @@ const loadAll = async () => {
     plannerPricingHistory.value = historyRes.data.history || []
     plannerQuotaSettings.value = quotaRes.data.settings || { values: { daily_limit: 3, monthly_limit: 10, ad_reward_daily_credits: 1, ad_reward_monthly_credits: 1, promotion_reward_daily_credits: 1, promotion_reward_monthly_credits: 2 }, source: 'environment', updated_at: null, updated_by: null }
     plannerQuotaHistory.value = quotaHistoryRes.data.history || []
+    roiBaselineSettings.value = roiBaselineRes.data.settings || { values: { qualified_leads_per_100_credits: 10 }, source: 'environment', updated_at: null, updated_by: null }
     touristQuotaLedger.value = quotaLedgerRes.data.entries || []
     plannerRewardVerifications.value = rewardVerificationRes.data.records || []
     operators.value = operatorsRes.data.operators || []
@@ -1066,6 +1111,7 @@ const loadAll = async () => {
     buildPlanDrafts()
     buildPlannerPricingForm()
     buildPlannerQuotaForm()
+    buildRoiBaselineForm()
     await loadReconciliationOps()
   } catch (error) {
     console.error('Failed to load billing admin data:', error)
@@ -1204,6 +1250,10 @@ const normalizePlannerQuotaForm = () => ({
   promotion_reward_monthly_credits: Math.max(0, Math.min(100, Number(plannerQuotaForm.value.promotion_reward_monthly_credits || 0))),
 })
 
+const normalizeRoiBaselineForm = () => ({
+  qualified_leads_per_100_credits: Math.max(0, Math.min(10000, Number(roiBaselineForm.value.qualified_leads_per_100_credits || 0))),
+})
+
 const persistPlannerPricing = async (payload) => {
   savingPlannerPricing.value = true
   try {
@@ -1230,6 +1280,20 @@ const persistPlannerQuota = async (payload) => {
     setMessage('error', error.response?.data?.detail || 'Failed to save planner quota settings')
   } finally {
     savingPlannerQuota.value = false
+  }
+}
+
+const persistRoiBaseline = async (payload) => {
+  savingRoiBaseline.value = true
+  try {
+    await api.post('/admin/billing/roi-baseline', payload, { headers: adminHeaders.value })
+    setMessage('success', 'ROI baseline saved')
+    await loadAll()
+  } catch (error) {
+    console.error('Failed to save ROI baseline:', error)
+    setMessage('error', error.response?.data?.detail || 'Failed to save ROI baseline')
+  } finally {
+    savingRoiBaseline.value = false
   }
 }
 
@@ -1273,6 +1337,14 @@ const resetPlannerQuota = () => {
     promotion_reward_daily_credits: 1,
     promotion_reward_monthly_credits: 2,
   }
+}
+
+const saveRoiBaseline = async () => {
+  await persistRoiBaseline(normalizeRoiBaselineForm())
+}
+
+const resetRoiBaseline = () => {
+  buildRoiBaselineForm()
 }
 
 const savePlan = async (plan) => {
@@ -1337,6 +1409,7 @@ const submitAdjustment = async () => {
 const readableText = (value) => String(value || '').replaceAll('_', ' ')
 const signedCredits = (value) => `${value > 0 ? '+' : ''}${value}`
 const formatMoney = (value) => Number(value || 0).toFixed(2)
+const formatNumber = (value, digits = 1) => Number(value || 0).toFixed(digits)
 const formatDateTime = (value) => value ? new Date(value).toLocaleString() : 'Never'
 const formatPricingTriple = (value) => {
   const pricing = value || {}

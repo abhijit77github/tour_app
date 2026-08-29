@@ -219,6 +219,10 @@ class PlannerPricingSettingsUpdate(BaseModel):
     conversion: int = Field(default=0, ge=0, le=100)
 
 
+class BillingRoiBaselineSettingsUpdate(BaseModel):
+    qualified_leads_per_100_credits: float = Field(default=10.0, ge=0, le=10000)
+
+
 class ProviderPlanInDB(BaseModel):
     operator_profile_id: str
     operator_user_id: str
