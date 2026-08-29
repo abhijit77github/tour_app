@@ -1,25 +1,44 @@
 <template>
-  <div class="quota-badge-compact" @click="showDetails = true">
+  <button 
+    class="quota-badge-compact" 
+    @click="showDetails = true"
+    aria-label="View quota details"
+    :aria-describedby="exhausted ? 'quota-exhausted' : 'quota-status'"
+  >
     <div class="quota-status" :class="statusClass">
-      <span class="quota-text">{{ displayText }}</span>
-      <span class="quota-icon">{{ statusIcon }}</span>
+      <span id="quota-status" class="quota-text">{{ displayText }}</span>
+      <span class="quota-icon" aria-hidden="true">{{ statusIcon }}</span>
     </div>
-  </div>
+    <span v-if="exhausted" id="quota-exhausted" class="sr-only">Quota exhausted</span>
+  </button>
 
   <!-- Details Modal -->
   <Teleport to="body">
-    <div v-if="showDetails" class="quota-modal-overlay" @click="showDetails = false">
+    <div 
+      v-if="showDetails" 
+      class="quota-modal-overlay" 
+      @click="showDetails = false"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="quota-modal-title"
+    >
       <div class="quota-modal glass-card" @click.stop>
         <div class="modal-header">
-          <h3>Planner Quota Details</h3>
-          <button class="btn-close" @click="showDetails = false">✕</button>
+          <h3 id="quota-modal-title">Planner Quota Details</h3>
+          <button 
+            class="btn-close" 
+            @click="showDetails = false"
+            aria-label="Close quota details"
+          >
+            <span aria-hidden="true">✕</span>
+          </button>
         </div>
 
-        <div v-if="loading && !quota" class="modal-loading">
+        <div v-if="loading && !quota" class="modal-loading" role="status" aria-live="polite">
           Loading quota information...
         </div>
 
-        <div v-else-if="error" class="modal-error">
+        <div v-else-if="error" class="modal-error" role="alert">
           {{ error }}
         </div>
 
@@ -27,12 +46,16 @@
           <div class="quota-stats-grid">
             <div class="stat-card">
               <div class="stat-label">Today</div>
-              <div class="stat-value">{{ quota?.daily_remaining ?? '—' }}</div>
+              <div class="stat-value" aria-label="`${quota?.daily_remaining ?? 0} requests remaining today`">
+                {{ quota?.daily_remaining ?? '—' }}
+              </div>
               <div class="stat-meta">of {{ quota?.effective_daily_limit ?? 0 }} requests</div>
             </div>
             <div class="stat-card">
               <div class="stat-label">This Month</div>
-              <div class="stat-value">{{ quota?.monthly_remaining ?? '—' }}</div>
+              <div class="stat-value" aria-label="`${quota?.monthly_remaining ?? 0} requests remaining this month`">
+                {{ quota?.monthly_remaining ?? '—' }}
+              </div>
               <div class="stat-meta">of {{ quota?.effective_monthly_limit ?? 0 }} requests</div>
             </div>
           </div>
@@ -48,18 +71,18 @@
             </div>
           </div>
 
-          <div v-if="exhausted" class="quota-exhausted-info">
+          <div v-if="exhausted" class="quota-exhausted-info" role="alert">
             <p class="exhausted-text">
               Your planner quota is currently exhausted. You can continue viewing your current session,
               but new planning requests will be available after the reset time.
             </p>
-            <button class="btn-upgrade">
-              ✨ Upgrade for Higher Limits
+            <button class="btn-upgrade" aria-label="Upgrade for higher quota limits">
+              <span aria-hidden="true">✨</span> Upgrade for Higher Limits
             </button>
           </div>
 
           <div v-else class="quota-usage-tips">
-            <h4>💡 Tips for efficient planning</h4>
+            <h4><span aria-hidden="true">💡</span> Tips for efficient planning</h4>
             <ul>
               <li>Provide detailed trip requirements in your first message</li>
               <li>Review itinerary ideas before requesting operator matches</li>
@@ -145,38 +168,62 @@ function formatReset(dateString) {
 </script>
 
 <style scoped>
+/* Screen Reader Only class */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
 .quota-badge-compact {
   cursor: pointer;
   user-select: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 12px;
 }
 
 .quota-status {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(8px);
+  min-height: 42px;
+  padding: 9px 13px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(100, 116, 139, 0.35);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
   transition: all 0.2s ease;
 }
 
 .quota-status:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
+  border-color: rgba(51, 65, 85, 0.45);
   transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
 }
 
 .quota-text {
-  font-size: 13px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
 }
 
 .quota-icon {
   font-size: 12px;
   line-height: 1;
+}
+
+.quota-badge-compact:focus-visible {
+  outline: 3px solid #0891b2;
+  outline-offset: 2px;
 }
 
 .status-success {
@@ -404,6 +451,15 @@ function formatReset(dateString) {
 }
 
 @media (max-width: 768px) {
+  .quota-status {
+    min-height: 40px;
+    padding: 8px 11px;
+  }
+
+  .quota-text {
+    font-size: 11px;
+  }
+
   .quota-modal {
     max-width: 100%;
     border-radius: 20px 20px 0 0;

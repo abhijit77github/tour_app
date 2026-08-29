@@ -205,6 +205,19 @@ class PlannerQuotaTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_planner_chat_blocks_before_bedrock_when_quota_exhausted(self):
         fake_db = FakeDB(
+            admin_settings=[
+                {
+                    "key": "planner_tourist_quota",
+                    "value": {
+                        "daily_limit": 3,
+                        "monthly_limit": 3,
+                        "ad_reward_daily_credits": 0,
+                        "ad_reward_monthly_credits": 0,
+                        "promotion_reward_daily_credits": 0,
+                        "promotion_reward_monthly_credits": 0,
+                    },
+                }
+            ],
             tourist_planner_quotas=[
                 {
                     "user_id": "tourist-1",

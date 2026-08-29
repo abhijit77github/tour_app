@@ -1,12 +1,37 @@
 <template>
-  <div class="planner-shell">
-    <div class="planner-page-new">
+  <div class="planner-shell" role="main">
+    <!-- Sprint 6: Skip Links for Accessibility -->
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    <a href="#chat-input" class="skip-link">Skip to chat input</a>
+    
+    <div 
+      class="planner-page-new"
+      @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
+      @touchend="handleTouchEnd"
+    >
+      
+      <!-- Sprint 4: Pull-to-refresh indicator -->
+      <div 
+        v-if="pullDistance > 0" 
+        class="pull-refresh-indicator"
+        :style="{ height: pullDistance + 'px', opacity: pullDistance / 80 }"
+        role="status"
+        aria-live="polite"
+        aria-label="Pull to refresh indicator"
+      >
+        <div class="refresh-icon" :class="{ spinning: isRefreshing }">
+          {{ isRefreshing ? '⟳' : '↓' }}
+        </div>
+        <span v-if="!isRefreshing">{{ pullDistance > 60 ? 'Release to refresh' : 'Pull to refresh' }}</span>
+        <span v-else>Refreshing...</span>
+      </div>
       
       <!-- New Header -->
-      <header class="planner-header glass-card">
+      <header class="planner-header glass-card" role="banner">
         <div class="header-left">
           <h1 class="planner-title">
-            <span class="title-icon">🧭</span>
+            <span class="title-icon" aria-hidden="true">🧭</span>
             Tour Planner
           </h1>
           <p class="planner-subtitle">AI-powered trip planning</p>
@@ -17,8 +42,16 @@
             :loading="plannerQuotaLoading" 
             :error="plannerQuotaError" 
           />
-          <router-link to="/cart" class="cart-button">
-            🛒 <span v-if="cartStore.itemCount > 0">({{ cartStore.itemCount }})</span>
+          <router-link 
+            to="/cart" 
+            class="cart-button"
+            aria-label="View cart"
+            :aria-describedby="cartStore.itemCount > 0 ? 'cart-count' : null"
+          >
+            <span aria-hidden="true">🛒</span>
+            <span v-if="cartStore.itemCount > 0" id="cart-count">
+              ({{ cartStore.itemCount }} {{ cartStore.itemCount === 1 ? 'item' : 'items' }})
+            </span>
           </router-link>
         </div>
       </header>
@@ -30,212 +63,7 @@
         @update:activeTab="activeTab = $event"
       />
 
-      <!-- OLD CONTENT TEMPORARILY WRAPPED IN FIRST TAB -->
-      <div v-show="activeTab === 'chat'" class="temp-wrapper">
-    
-    <div class="planner-page">
-      <aside class="planner-sidebar">
-        <div class="sidebar-glow"></div>
-        <div class="sidebar-header">
-          <div class="eyebrow">AI trip concierge</div>
-          <h2>Plan smarter, pick faster.</h2>
-          <p class="sidebar-sub">
-            Describe the trip once. Compare the best matches and add individually.
-          </p>
-        </div>
-
-        <StepGuidePanel
-          class="planner-guide"
-          variant="planner"
-          eyebrow="Planner Flow"
-          title="Three steps from brief to shortlist"
-          description="Tell the planner what you need, review grounded itinerary ideas, then keep only the operators you want in your cart."
-          :steps="plannerSteps"
-        />
-
-        <div class="quota-card glass-card">
-          <div class="card-title-row compact-title-row">
-            <h3>Planner quota</h3>
-            <span class="mini-pill" :class="quotaExhausted ? 'quota-pill danger' : 'quota-pill'">
-              {{ quotaExhausted ? 'Paused' : 'Available' }}
-            </span>
-          </div>
-
-          <div v-if="plannerQuotaLoading && !plannerQuota" class="itinerary-empty">Loading planner quota…</div>
-          <div v-else class="quota-grid-panel">
-            <div class="quota-stat">
-              <span class="req-label">Today</span>
-              <strong>{{ plannerQuota?.daily_remaining ?? '—' }}</strong>
-              <span>of {{ plannerQuota?.effective_daily_limit ?? 0 }} requests left</span>
-            </div>
-            <div class="quota-stat">
-              <span class="req-label">This month</span>
-              <strong>{{ plannerQuota?.monthly_remaining ?? '—' }}</strong>
-              <span>of {{ plannerQuota?.effective_monthly_limit ?? 0 }} requests left</span>
-            </div>
-          </div>
-
-          <p v-if="plannerQuota" class="quota-meta">
-            Resets {{ formatQuotaReset(plannerQuota.daily_resets_at) }} daily and {{ formatQuotaReset(plannerQuota.monthly_resets_at) }} monthly.
-          </p>
-          <p v-if="plannerQuotaError" class="quota-meta error-text">{{ plannerQuotaError }}</p>
-
-          <div v-if="quotaExhausted" class="quota-lock-panel">
-            <p class="quota-lock-copy">Planner quota is exhausted. Extra planner credits can only be granted after a server-verified ad or promotion reward.</p>
-            <button type="button" class="btn-reward-locked" disabled>
-              🔒 Reward unlock CTA locked
-            </button>
-            <p class="quota-lock-note">This CTA stays locked until rewarded ads or promotions are wired to the verification flow.</p>
-          </div>
-        </div>
-
-        <div v-if="hasRequirements" class="req-card glass-card" v-show="showTripBrief">
-          <div class="card-title-row compact-title-row">
-            <h3>Your trip brief</h3>
-            <span class="mini-pill">In progress</span>
-          </div>
-
-          <div class="req-grid">
-            <div class="req-item" v-if="requirements.locations?.length">
-              <span class="req-label">Destinations</span>
-              <span>{{ requirements.locations.join(', ') }}</span>
-            </div>
-            <div class="req-item" v-if="requirements.travel_dates">
-              <span class="req-label">Travel window</span>
-              <span>{{ requirements.travel_dates }}</span>
-            </div>
-            <div class="req-item" v-if="requirements.group_size">
-              <span class="req-label">Group size</span>
-              <span>{{ requirements.group_size }} people</span>
-            </div>
-            <div class="req-item" v-if="requirements.budget_usd">
-              <span class="req-label">Budget</span>
-              <span>${{ requirements.budget_usd }}</span>
-            </div>
-            <div class="req-item" v-if="requirements.duration_days">
-              <span class="req-label">Duration</span>
-              <span>{{ requirements.duration_days }} days</span>
-            </div>
-            <div class="req-item" v-if="requirements.preferences?.length">
-              <span class="req-label">Style</span>
-              <span>{{ requirements.preferences.join(', ') }}</span>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="hasRequirements" class="itinerary-card glass-card">
-          <div class="card-title-row compact-title-row">
-            <h3>Itinerary ideas</h3>
-            <div class="header-actions">
-              <button class="mini-toggle" type="button" @click="loadItineraryIdeas" :disabled="itineraryLoading">
-                {{ itineraryLoading ? 'Loading…' : 'Refresh' }}
-              </button>
-              <router-link
-                class="mini-link"
-                :to="{ path: '/itineraries', query: { area_name: requirements.locations?.[0] || '', state: requirements.states?.[0] || '', duration_days: requirements.duration_days || '' } }"
-              >Open builder</router-link>
-            </div>
-          </div>
-
-          <div v-if="itineraryError" class="itinerary-empty">{{ itineraryError }}</div>
-          <div v-else-if="itineraryLoading && !itineraryIdeas.length" class="itinerary-empty">Finding grounded itinerary options…</div>
-          <div v-else-if="!itineraryIdeas.length" class="itinerary-empty">No itinerary ideas yet. Add destination and duration details first.</div>
-          <div v-else class="itinerary-list">
-            <article v-for="item in itineraryIdeas" :key="item._id" class="itinerary-item">
-              <div class="itinerary-top">
-                <div>
-                  <h4>{{ item.title }}</h4>
-                  <p>{{ item.summary || 'Operator-curated template' }}</p>
-                </div>
-                <span class="mini-pill count-pill">{{ item.duration_days }}d</span>
-              </div>
-              <div class="itinerary-meta">
-                <span>{{ item.primary_location?.area_name }}</span>
-                <span v-if="item.operator_name">{{ item.operator_name }}</span>
-                <span>Score {{ Number(item.score || 0).toFixed(1) }}</span>
-              </div>
-            </article>
-          </div>
-        </div>
-
-        <div class="operator-header" v-if="suggestedOperators.length">
-          <div>
-            <h3>Matched providers</h3>
-            <p>Choose any provider you want to keep in the cart.</p>
-          </div>
-          <div class="header-actions">
-            <span class="mini-pill count-pill">{{ suggestedOperators.length }}</span>
-            <button class="mini-toggle" type="button" @click="showOperators = !showOperators">
-              {{ showOperators ? 'Hide' : 'Show' }}
-            </button>
-          </div>
-        </div>
-
-        <div v-if="suggestedOperators.length && showOperators" class="operators-panel">
-          <div
-            v-for="op in suggestedOperators"
-            :key="op.id"
-            class="operator-card glass-card"
-            :class="{ added: addedIds.has(op.id) }"
-          >
-            <div class="op-topline">
-              <div class="op-avatar">{{ op.business_name?.charAt(0)?.toUpperCase() || 'T' }}</div>
-              <div class="op-meta">
-                <h4>{{ op.business_name }}</h4>
-                <div class="op-match-row">
-                  <span class="match-pill service-pill">{{ serviceLabel(op) }}</span>
-                  <span class="match-pill" :class="matchClass(op)">{{ matchLabel(op) }}</span>
-                  <span v-if="op.budget_fit" class="match-pill budget-pill">Budget fit</span>
-                  <span class="match-score">Score {{ Number(op.score || 0).toFixed(1) }}</span>
-                </div>
-                <div class="op-rating-row">
-                  <span class="op-rating">★ {{ Number(op.average_rating || 0).toFixed(1) }}</span>
-                  <span class="op-reviews">{{ op.total_reviews || 0 }} reviews</span>
-                </div>
-              </div>
-            </div>
-
-            <p v-if="op.match_reason" class="op-match-reason">{{ op.match_reason }}</p>
-
-            <p v-if="op.description" class="op-description">{{ op.description }}</p>
-
-            <div v-if="op.recommended_service === 'car' && op.car_option" class="car-quick-specs">
-              <span>{{ op.car_option.vehicle_type || 'Car service' }}</span>
-              <span v-if="op.car_option.seats">{{ op.car_option.seats }} seats</span>
-              <span v-if="op.car_option.pricing_model">{{ op.car_option.pricing_model }}</span>
-              <span v-if="op.car_option.base_fare">From ${{ op.car_option.base_fare }}</span>
-            </div>
-
-            <div class="op-areas">
-              <span v-for="area in op.serving_areas.slice(0, 3)" :key="area" class="area-tag">
-                {{ area }}
-              </span>
-            </div>
-
-            <div class="op-footer">
-              <p v-if="op.price_range" class="op-price">{{ op.price_range }}</p>
-              <div class="op-actions">
-                <button
-                  v-if="!addedIds.has(op.id)"
-                  class="btn-add"
-                  :disabled="addingId === op.id"
-                  @click="addToCart(op)"
-                >
-                  {{ addingId === op.id ? 'Adding...' : 'Add to Cart' }}
-                </button>
-                <span v-else class="added-label">Added</span>
-                <router-link :to="`/operator/${op.user_id}`" class="btn-view" target="_blank">
-                  Profile
-                </router-link>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <button class="btn-new-session" @click="startNewSession">
-          + Start fresh itinerary
-        </button>
-      </aside>
+      <div v-show="activeTab === 'chat'" class="planner-page">
 
       <main class="chat-area">
         <section class="planner-toolbar glass-card">
@@ -291,20 +119,39 @@
           </div>
         </section>
 
-        <div class="messages glass-card" ref="messagesEl">
+        <!-- Sprint 6: Screen Reader Announcements -->
+        <div 
+          class="sr-only" 
+          role="status" 
+          aria-live="polite" 
+          aria-atomic="true"
+        >
+          {{ screenReaderAnnouncement }}
+        </div>
+
+        <div 
+          id="main-content"
+          class="messages glass-card" 
+          ref="messagesEl"
+          role="log"
+          aria-label="Chat conversation"
+          aria-live="polite"
+          aria-relevant="additions"
+        >
           <div v-if="!messages.length" class="welcome-state">
-            <div class="welcome-badge">Tell me the destination, budget, and vibe</div>
-            <div class="welcome-icon">🧭</div>
+            <div class="welcome-badge" role="status">Tell me the destination, budget, and vibe</div>
+            <div class="welcome-icon" aria-hidden="true">🧭</div>
             <h2>Start with a plain-English trip request</h2>
             <p>
               For example: “I want Coorg for 4 days with my family, mid-range budget, and a relaxed itinerary.”
             </p>
-            <div class="starter-chips">
+            <div class="starter-chips" role="group" aria-label="Quick start prompts">
               <button
                 v-for="prompt in starterPrompts"
                 :key="prompt"
                 class="chip"
                 @click="sendStarter(prompt)"
+                :aria-label="`Quick start: ${prompt}`"
               >
                 {{ prompt }}
               </button>
@@ -322,13 +169,13 @@
               <p class="msg-text" v-html="formatText(msg.text)"></p>
               
               <!-- Inline Operator Cards (Sprint 2) -->
-              <div v-if="msg.operators && msg.operators.length" class="inline-operators">
+              <div v-if="getInlineOperators(msg, idx).length" class="inline-operators">
                 <div class="inline-operators-header">
-                  <span class="operators-badge">{{ msg.operators.length }} matches found</span>
+                  <span class="operators-badge">{{ getInlineOperators(msg, idx).length }} matches found</span>
                 </div>
                 <div class="inline-operator-grid">
                   <div 
-                    v-for="op in msg.operators.slice(0, 3)" 
+                    v-for="op in getInlineOperators(msg, idx).slice(0, 3)" 
                     :key="op.id" 
                     class="inline-op-card"
                     :class="{ added: addedIds.has(op.id) }"
@@ -354,30 +201,39 @@
                         class="btn-inline-add" 
                         :disabled="addingId === op.id"
                         @click="addToCart(op)"
+                        :aria-label="`Add ${op.name} to cart`"
+                        :aria-busy="addingId === op.id"
                       >
                         {{ addingId === op.id ? 'Adding...' : 'Add to Cart' }}
                       </button>
-                      <span v-else class="inline-added">✓ Added</span>
-                      <button class="btn-inline-view" @click="activeTab = 'matches'">
+                      <span v-else class="inline-added" role="status" aria-live="polite">
+                        <span aria-hidden="true">✓</span> Added
+                      </span>
+                      <button 
+                        class="btn-inline-view" 
+                        @click="activeTab = 'matches'"
+                        aria-label="View all matches"
+                      >
                         View All
                       </button>
                     </div>
                   </div>
                 </div>
-                <p v-if="msg.operators.length > 3" class="inline-operators-more">
-                  + {{ msg.operators.length - 3 }} more in <button @click="activeTab = 'matches'" class="link-button">Matches tab</button>
+                <p v-if="getInlineOperators(msg, idx).length > 3" class="inline-operators-more">
+                  + {{ getInlineOperators(msg, idx).length - 3 }} more in <button @click="activeTab = 'matches'" class="link-button">Matches tab</button>
                 </p>
               </div>
 
               <!-- Quick Reply Buttons (Sprint 2) -->
-              <div v-if="msg.quickReplies && msg.quickReplies.length" class="quick-replies">
+              <div v-if="msg.quickReplies && msg.quickReplies.length" class="quick-replies" role="group" aria-label="Quick reply options">
                 <button 
                   v-for="(reply, ridx) in msg.quickReplies" 
                   :key="ridx"
                   class="quick-reply-btn"
                   @click="sendQuickReply(reply)"
+                  :aria-label="`Quick reply: ${reply.text}`"
                 >
-                  {{ reply.icon }} {{ reply.text }}
+                  <span aria-hidden="true">{{ reply.icon }}</span> {{ reply.text }}
                 </button>
               </div>
             </div>
@@ -408,9 +264,16 @@
           </div>
         </div>
 
-        <form class="chat-input-area glass-card" @submit.prevent="sendMessage">
+        <form 
+          class="chat-input-area glass-card" 
+          @submit.prevent="sendMessage"
+          role="form"
+          aria-label="Chat message input"
+        >
           <div class="input-wrap">
+            <label for="chat-input" class="sr-only">Enter your trip description</label>
             <textarea
+              id="chat-input"
               ref="inputEl"
               v-model="input"
               :disabled="streaming"
@@ -418,28 +281,362 @@
               rows="1"
               @keydown.enter.exact.prevent="sendMessage"
               @input="autoResize"
+              aria-label="Trip description input"
+              aria-describedby="input-hint"
+              :aria-disabled="streaming"
             ></textarea>
-            <p class="input-hint">Include destination, dates, travelers, budget, and preferences.</p>
+            <p id="input-hint" class="input-hint">Include destination, dates, travelers, budget, and preferences.</p>
           </div>
-          <button type="submit" :disabled="streaming || !input.trim()" class="btn-send">
+          <button 
+            type="submit" 
+            :disabled="streaming || !input.trim()" 
+            class="btn-send"
+            aria-label="Send message"
+            :aria-busy="streaming"
+          >
             <span v-if="!streaming">Send</span>
-            <span v-else class="sending-dots"><span></span><span></span><span></span></span>
+            <span v-else class="sending-dots" aria-label="Sending message">
+              <span></span><span></span><span></span>
+            </span>
           </button>
         </form>
       </main>
     </div>
       
-      </div><!-- end temp-wrapper -->
-      
       <!-- Placeholder tabs -->
-      <div v-show="activeTab === 'matches'" class="tab-panel">
-        <p style="padding: 40px; text-align: center;">Matches tab coming soon...</p>
+      <div v-show="activeTab === 'matches'" class="tab-panel matches-panel" role="tabpanel" aria-labelledby="matches-tab">
+        <div class="matches-container">
+          
+          <!-- Filters & Sort Bar -->
+          <div class="matches-controls glass-card" role="region" aria-label="Filter and sort controls">
+            <div class="controls-row">
+              
+              <!-- Service Type Filter -->
+              <div class="control-group">
+                <label class="control-label" id="service-filter-label">Service</label>
+                <div class="filter-buttons" role="group" aria-labelledby="service-filter-label">
+                  <button 
+                    class="filter-btn" 
+                    :class="{ active: matchesFilter.service === 'all' }"
+                    @click="matchesFilter.service = 'all'"
+                    aria-label="Show all services"
+                    :aria-pressed="matchesFilter.service === 'all'"
+                  >
+                    All
+                  </button>
+                  <button 
+                    class="filter-btn" 
+                    :class="{ active: matchesFilter.service === 'tour' }"
+                    @click="matchesFilter.service = 'tour'"
+                    aria-label="Show tours only"
+                    :aria-pressed="matchesFilter.service === 'tour'"
+                  >
+                    <span aria-hidden="true">🗺️</span> Tours
+                  </button>
+                  <button 
+                    class="filter-btn" 
+                    :class="{ active: matchesFilter.service === 'car' }"
+                    @click="matchesFilter.service = 'car'"
+                    aria-label="Show car rentals only"
+                    :aria-pressed="matchesFilter.service === 'car'"
+                  >
+                    <span aria-hidden="true">🚗</span> Cars
+                  </button>
+                </div>
+              </div>
+
+              <!-- Rating Filter -->
+              <div class="control-group">
+                <label for="rating-filter" class="control-label">Min Rating</label>
+                <select 
+                  id="rating-filter"
+                  v-model="matchesFilter.rating" 
+                  class="filter-select"
+                  aria-label="Filter by minimum rating"
+                >
+                  <option value="0">Any</option>
+                  <option value="3">3+ ⭐</option>
+                  <option value="3.5">3.5+ ⭐</option>
+                  <option value="4">4+ ⭐</option>
+                  <option value="4.5">4.5+ ⭐</option>
+                </select>
+              </div>
+
+              <!-- Sort Control -->
+              <div class="control-group">
+                <label for="sort-select" class="control-label">Sort by</label>
+                <select 
+                  id="sort-select"
+                  v-model="matchesSort" 
+                  class="filter-select"
+                  aria-label="Sort results by"
+                >
+                  <option value="score">Best Match</option>
+                  <option value="rating">Highest Rated</option>
+                  <option value="price-low">Price: Low to High</option>
+                  <option value="price-high">Price: High to Low</option>
+                </select>
+              </div>
+
+              <!-- Result Count -->
+              <div class="control-group result-count">
+                <span class="count-label" role="status" aria-live="polite">{{ filteredOperators.length }} results</span>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Operators Grid -->
+          <div v-if="filteredOperators.length > 0" class="matches-grid">
+            <div 
+              v-for="op in filteredOperators" 
+              :key="op.id" 
+              class="match-card glass-card"
+              :class="{ 'match-added': addedIds.has(op.id) }"
+            >
+              
+              <!-- Card Header -->
+              <div class="match-header">
+                <div class="match-avatar">{{ op.business_name?.charAt(0)?.toUpperCase() }}</div>
+                <div class="match-info">
+                  <h3 class="match-name">{{ op.business_name }}</h3>
+                  <div class="match-meta">
+                    <span class="match-rating">⭐ {{ Number(op.average_rating || 0).toFixed(1) }}</span>
+                    <span v-if="op.score" class="match-score">{{ Number(op.score).toFixed(0) }}% match</span>
+                  </div>
+                </div>
+                <div v-if="addedIds.has(op.id)" class="match-badge added-badge">✓ Added</div>
+              </div>
+
+              <!-- Match Reason -->
+              <p v-if="op.match_reason" class="match-reason">{{ op.match_reason }}</p>
+
+              <!-- Service Info -->
+              <div class="match-service">
+                <span class="service-badge" :class="op.recommended_service === 'car' ? 'badge-car' : 'badge-tour'">
+                  {{ op.recommended_service === 'car' ? '🚗 Car Service' : '🗺️ Tour Packages' }}
+                </span>
+                <span v-if="op.budget_fit" class="service-badge badge-budget">💰 Budget fit</span>
+              </div>
+
+              <!-- Serving Areas -->
+              <div v-if="op.serving_areas?.length" class="match-areas">
+                <span class="areas-label">Serves:</span>
+                <span 
+                  v-for="area in op.serving_areas.slice(0, 4)" 
+                  :key="area" 
+                  class="area-tag"
+                >
+                  {{ area }}
+                </span>
+                <span v-if="op.serving_areas.length > 4" class="area-more">
+                  +{{ op.serving_areas.length - 4 }} more
+                </span>
+              </div>
+
+              <!-- Description -->
+              <p v-if="op.description" class="match-description">{{ op.description }}</p>
+
+              <!-- Price Range -->
+              <div v-if="op.price_range" class="match-price">
+                <span class="price-label">Pricing:</span>
+                <span class="price-value">{{ op.price_range }}</span>
+              </div>
+
+              <!-- Actions -->
+              <div class="match-actions">
+                <button 
+                  v-if="!addedIds.has(op.id)"
+                  class="btn-match-add" 
+                  :disabled="addingId === op.id"
+                  @click="addToCart(op)"
+                  :aria-label="`Add ${op.name} to cart`"
+                  :aria-busy="addingId === op.id"
+                >
+                  {{ addingId === op.id ? 'Adding...' : 'Add to Cart' }}
+                </button>
+                <span v-else class="match-added-label" role="status" aria-live="polite">
+                  <span aria-hidden="true">✓</span> Added to cart
+                </span>
+                <router-link 
+                  :to="`/operator/${op.user_id}`" 
+                  class="btn-match-view" 
+                  target="_blank"
+                >
+                  View Profile
+                </router-link>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Empty State -->
+          <div v-else class="matches-empty">
+            <div class="empty-icon">🔍</div>
+            <h3>No operators matched yet</h3>
+            <p v-if="suggestedOperators.length === 0">
+              Start chatting to find tour operators and car services that match your needs.
+            </p>
+            <p v-else>
+              No operators match your current filters. Try adjusting the filters above.
+            </p>
+            <button 
+              v-if="suggestedOperators.length === 0"
+              class="btn-empty-action" 
+              @click="activeTab = 'chat'"
+            >
+              Go to Chat
+            </button>
+            <button 
+              v-else
+              class="btn-empty-action" 
+              @click="resetFilters"
+            >
+              Reset Filters
+            </button>
+          </div>
+
+        </div>
       </div>
-      <div v-show="activeTab === 'itinerary'" class="tab-panel">
-        <p style="padding: 40px; text-align: center;">Itinerary tab coming soon...</p>
+      
+      <div v-show="activeTab === 'itinerary'" class="tab-panel" role="tabpanel" aria-labelledby="itinerary-tab">
+        <div class="matches-container">
+          <div class="itinerary-card glass-card">
+            <div class="card-title-row compact-title-row">
+              <h3>Itinerary ideas</h3>
+              <div class="header-actions">
+                <button class="mini-toggle" type="button" @click="loadItineraryIdeas" :disabled="itineraryLoading">
+                  {{ itineraryLoading ? 'Loading...' : 'Refresh' }}
+                </button>
+                <router-link
+                  class="mini-link"
+                  :to="{ path: '/itineraries', query: { area_name: requirements.locations?.[0] || '', state: requirements.states?.[0] || '', duration_days: requirements.duration_days || '' } }"
+                >
+                  Open builder
+                </router-link>
+              </div>
+            </div>
+
+            <div v-if="!hasRequirements" class="itinerary-empty">
+              Add destination and duration in Chat first to generate itinerary ideas.
+            </div>
+            <div v-else-if="itineraryError" class="itinerary-empty">{{ itineraryError }}</div>
+            <div v-else-if="itineraryLoading && !itineraryIdeas.length" class="itinerary-empty">
+              Finding grounded itinerary options...
+            </div>
+            <div v-else-if="!itineraryIdeas.length" class="itinerary-empty">
+              No itinerary ideas yet. Try refining your request in Chat.
+            </div>
+            <div v-else class="itinerary-list">
+              <article v-for="item in itineraryIdeas" :key="item._id" class="itinerary-item">
+                <div class="itinerary-top">
+                  <div>
+                    <h4>{{ item.title }}</h4>
+                    <p>{{ item.summary || 'Operator-curated template' }}</p>
+                  </div>
+                  <span class="mini-pill count-pill">{{ item.duration_days }}d</span>
+                </div>
+                <div class="itinerary-meta">
+                  <span>{{ item.primary_location?.area_name }}</span>
+                  <span v-if="item.operator_name">{{ item.operator_name }}</span>
+                  <span>Score {{ Number(item.score || 0).toFixed(1) }}</span>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
       </div>
-      <div v-show="activeTab === 'requirements'" class="tab-panel">
-        <p style="padding: 40px; text-align: center;">Requirements tab coming soon...</p>
+
+      <div v-show="activeTab === 'requirements'" class="tab-panel" role="tabpanel" aria-labelledby="requirements-tab">
+        <div class="matches-container">
+          <div class="req-card glass-card">
+            <div class="card-title-row compact-title-row">
+              <h3>Trip requirements</h3>
+              <span class="mini-pill">{{ hasRequirements ? 'Captured' : 'Awaiting details' }}</span>
+            </div>
+
+            <div v-if="hasRequirements" class="req-actions" role="group" aria-label="Refine requirements in chat">
+              <button class="mini-toggle" type="button" @click="editRequirementInChat('dates')">Edit Dates</button>
+              <button class="mini-toggle" type="button" @click="editRequirementInChat('budget')">Edit Budget</button>
+              <button class="mini-toggle" type="button" @click="editRequirementInChat('refine')">Refine Search</button>
+            </div>
+
+            <div v-if="!hasRequirements" class="itinerary-empty">
+              Share destination, dates, traveler count, budget, and preferences in Chat to populate this tab.
+            </div>
+
+            <div v-else class="req-grid">
+              <div class="req-item" v-if="requirements.locations?.length">
+                <span class="req-label">Destinations</span>
+                <span>{{ requirements.locations.join(', ') }}</span>
+              </div>
+              <div class="req-item" v-if="requirements.states?.length">
+                <span class="req-label">States</span>
+                <span>{{ requirements.states.join(', ') }}</span>
+              </div>
+              <div class="req-item" v-if="requirements.travel_dates">
+                <span class="req-label">Travel window</span>
+                <span>{{ requirements.travel_dates }}</span>
+              </div>
+              <div class="req-item" v-if="requirements.group_size">
+                <span class="req-label">Group size</span>
+                <span>{{ requirements.group_size }} people</span>
+              </div>
+              <div class="req-item" v-if="requirements.duration_days">
+                <span class="req-label">Duration</span>
+                <span>{{ requirements.duration_days }} days</span>
+              </div>
+              <div class="req-item" v-if="requirements.budget_usd">
+                <span class="req-label">Budget</span>
+                <span>${{ requirements.budget_usd }}</span>
+              </div>
+              <div class="req-item" v-if="requirements.service_mode">
+                <span class="req-label">Service mode</span>
+                <span>{{ requirements.service_mode }}</span>
+              </div>
+              <div class="req-item" v-if="requirements.preferences?.length">
+                <span class="req-label">Preferences</span>
+                <span>{{ requirements.preferences.join(', ') }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sprint 4: Floating Action Buttons (Mobile) -->
+      <div class="fab-container">
+        <!-- Cart FAB -->
+        <router-link 
+          to="/cart" 
+          class="fab fab-cart"
+          :class="{ 'has-items': cartStore.itemCount > 0 }"
+          @click="hapticFeedback('medium')"
+          role="button"
+          aria-label="View cart"
+          :aria-describedby="cartStore.itemCount > 0 ? 'fab-cart-count' : null"
+        >
+          <span aria-hidden="true">🛒</span>
+          <span v-if="cartStore.itemCount > 0" id="fab-cart-count" class="fab-badge">{{ cartStore.itemCount }}</span>
+        </router-link>
+        
+        <!-- Scroll to bottom FAB (only when scrolled down) -->
+        <button 
+          v-if="showFAB && activeTab === 'chat'" 
+          class="fab fab-scroll"
+          @click="scrollToBottom"
+          aria-label="Scroll to bottom"
+        >
+          <span aria-hidden="true">↓</span>
+        </button>
+        
+        <!-- New session FAB -->
+        <button 
+          class="fab fab-new-session"
+          @click="startNewSessionFAB"
+          aria-label="Start new session"
+        >
+          <span aria-hidden="true">✨</span>
+        </button>
       </div>
 
     </div><!-- end planner-page-new -->
@@ -449,11 +646,15 @@
 <script setup>
 import { ref, computed, nextTick, onMounted } from 'vue'
 import { v4 as uuidv4 } from 'uuid'
-import StepGuidePanel from '../components/StepGuidePanel.vue'
 import TabNavigation from '../components/TabNavigation.vue'
 import QuotaBadge from '../components/QuotaBadge.vue'
+import LoadingSkeleton from '../components/LoadingSkeleton.vue'
 import api from '../services/api'
 import { useCartStore } from '../stores/cart'
+import { useToast } from '../composables/useToast'
+
+// Sprint 5: Toast system
+const toast = useToast()
 
 // ─── State ───────────────────────────────────────────────────────────────────
 const sessionId = ref(localStorage.getItem('plannerSessionId') || uuidv4())
@@ -467,8 +668,6 @@ const statusText = ref('')
 const addedIds = ref(new Set())
 const addingId = ref(null)
 const serviceMode = ref('tour')
-const showTripBrief = ref(true)
-const showOperators = ref(true)
 const itineraryIdeas = ref([])
 const itineraryLoading = ref(false)
 const itineraryError = ref('')
@@ -484,6 +683,26 @@ const activeTab = ref('chat')
 
 // Sprint 2: Status progress tracking
 const statusProgressClass = ref('progress-searching')
+
+// Sprint 3: Matches tab filtering & sorting
+const matchesFilter = ref({
+  service: 'all',  // 'all', 'tour', 'car'
+  rating: 0        // minimum rating filter
+})
+const matchesSort = ref('score')  // 'score', 'rating', 'price-low', 'price-high'
+
+// Sprint 4: Mobile gestures & interactions
+const touchStartX = ref(0)
+const touchStartY = ref(0)
+const touchEndX = ref(0)
+const touchEndY = ref(0)
+const showFAB = ref(false)
+const pullStartY = ref(0)
+const pullDistance = ref(0)
+const isRefreshing = ref(false)
+
+// Sprint 6: Accessibility
+const screenReaderAnnouncement = ref('')
 
 const tabs = computed(() => [
   {
@@ -522,9 +741,37 @@ const hasRequirements = computed(() =>
   requirements.value.group_size
 )
 
-const quotaExhausted = computed(() => {
-  if (!plannerQuota.value) return false
-  return Number(plannerQuota.value.daily_remaining || 0) <= 0 || Number(plannerQuota.value.monthly_remaining || 0) <= 0
+// Sprint 3: Filtered and sorted operators
+const filteredOperators = computed(() => {
+  let filtered = [...suggestedOperators.value]
+
+  // Filter by service type
+  if (matchesFilter.value.service !== 'all') {
+    filtered = filtered.filter(op => op.recommended_service === matchesFilter.value.service)
+  }
+
+  // Filter by minimum rating
+  if (matchesFilter.value.rating > 0) {
+    filtered = filtered.filter(op => Number(op.average_rating || 0) >= matchesFilter.value.rating)
+  }
+
+  // Sort operators
+  filtered.sort((a, b) => {
+    switch (matchesSort.value) {
+      case 'score':
+        return Number(b.score || 0) - Number(a.score || 0)
+      case 'rating':
+        return Number(b.average_rating || 0) - Number(a.average_rating || 0)
+      case 'price-low':
+        return getPriceValue(a.price_range) - getPriceValue(b.price_range)
+      case 'price-high':
+        return getPriceValue(b.price_range) - getPriceValue(a.price_range)
+      default:
+        return 0
+    }
+  })
+
+  return filtered
 })
 
 const starterPrompts = [
@@ -533,11 +780,6 @@ const starterPrompts = [
   'Adventure trip to Himalayas for 2 people',
   'Cultural tour of Rajasthan for 5 days',
 ]
-const plannerSteps = [
-  { title: 'Describe the trip plainly', detail: 'Destination, dates, travelers, budget, and vibe are enough for the planner to start narrowing the route.' },
-  { title: 'Review itinerary ideas', detail: 'The sidebar surfaces grounded itinerary templates once the planner has enough destination and duration detail.' },
-  { title: 'Add only the best matches', detail: 'Keep provider selection deliberate by adding individual operators to cart instead of accepting a bulk shortlist.' }
-]
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 onMounted(async () => {
@@ -545,6 +787,11 @@ onMounted(async () => {
   cartStore.initCart()
   await loadPlannerQuota()
   await loadSession()
+  
+  // Sprint 4: Attach mobile gesture listeners
+  if (messagesEl.value) {
+    messagesEl.value.addEventListener('scroll', handleScroll)
+  }
 })
 
 async function loadPlannerQuota() {
@@ -561,10 +808,34 @@ async function loadPlannerQuota() {
 }
 
 // ─── Load existing session ────────────────────────────────────────────────────
-async function loadSession() {
+async function loadSession(options = {}) {
+  const { preserveEnhancements = false } = options
   try {
     const res = await api.get(`/tour-planner/session/${sessionId.value}`)
-    messages.value = res.data.messages || []
+    const serverMessages = res.data.messages || []
+
+    if (preserveEnhancements && messages.value.length) {
+      // Keep local UI enrichments (inline operators/quick replies) that backend messages may not persist.
+      const localEnhancements = new Map()
+      for (const msg of messages.value) {
+        if (!msg || msg.role !== 'assistant') continue
+        if (!msg.operators && !msg.quickReplies) continue
+        localEnhancements.set(`${msg.role}::${msg.text}`, msg)
+      }
+
+      messages.value = serverMessages.map((msg) => {
+        const enhanced = localEnhancements.get(`${msg.role}::${msg.text}`)
+        if (!enhanced) return msg
+        return {
+          ...msg,
+          operators: enhanced.operators || msg.operators || null,
+          quickReplies: enhanced.quickReplies || msg.quickReplies || null,
+        }
+      })
+    } else {
+      messages.value = serverMessages
+    }
+
     suggestedOperators.value = res.data.suggested_operators || []
     requirements.value = res.data.requirements || {}
     if (Object.keys(requirements.value || {}).length) {
@@ -623,13 +894,16 @@ async function sendMessage() {
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
+    let sseBuffer = ''
 
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
 
-      const raw = decoder.decode(value)
-      const lines = raw.split('\n')
+      const raw = decoder.decode(value, { stream: true })
+      sseBuffer += raw
+      const lines = sseBuffer.split('\n')
+      sseBuffer = lines.pop() || ''
 
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue
@@ -673,12 +947,45 @@ async function sendMessage() {
         } catch {}
       }
     }
+
+    // Flush any remaining buffered SSE data line after stream ends.
+    const tailLine = sseBuffer.trim()
+    if (tailLine.startsWith('data: ')) {
+      try {
+        const event = JSON.parse(tailLine.slice(6))
+        if (event.type === 'text') {
+          streamingText.value += event.text
+        } else if (event.type === 'status') {
+          statusText.value = event.text
+        } else if (event.type === 'operators') {
+          suggestedOperators.value = event.operators || []
+        } else if (event.type === 'itineraries') {
+          itineraryIdeas.value = event.itineraries || []
+          itineraryError.value = ''
+        } else if (event.type === 'error') {
+          streamingText.value = ''
+          messages.value.push({ role: 'assistant', text: `⚠️ ${event.text}` })
+        } else if (event.type === 'done') {
+          if (streamingText.value) {
+            const enhancedMessage = {
+              role: 'assistant',
+              text: streamingText.value,
+              operators: suggestedOperators.value.length > 0 ? [...suggestedOperators.value] : null,
+              quickReplies: generateQuickReplies(streamingText.value, suggestedOperators.value)
+            }
+            messages.value.push(enhancedMessage)
+            streamingText.value = ''
+          }
+          statusText.value = ''
+        }
+      } catch {}
+    }
   } catch (err) {
     messages.value.push({ role: 'assistant', text: '⚠️ Connection error. Please try again.' })
   } finally {
     streaming.value = false
     streamingText.value = ''
-    await loadSession()
+    await loadSession({ preserveEnhancements: true })
     await loadPlannerQuota()
     scrollBottom()
     await nextTick()
@@ -693,8 +1000,70 @@ function sendStarter(prompt) {
 
 // ─── Quick reply handler (Sprint 2) ──────────────────────────────────────────
 function sendQuickReply(reply) {
-  input.value = reply.message || reply.text
-  sendMessage()
+  const label = (reply?.text || '').toLowerCase()
+  let action = reply?.action
+
+  if (!action) {
+    if (label.includes('view all matches')) action = 'goto-matches'
+    else if (label.includes('add dates')) action = 'prefill-dates'
+    else if (label.includes('set budget')) action = 'prefill-budget'
+    else if (label.includes('refine search')) action = 'prefill-refine'
+  }
+
+  applyQuickAction(action, reply?.message || reply?.text || '')
+}
+
+function applyQuickAction(action, fallbackText = '') {
+  // Navigation action: jump straight to Matches tab.
+  if (action === 'goto-matches') {
+    activeTab.value = 'matches'
+    return
+  }
+
+  // All template actions continue in Chat.
+  activeTab.value = 'chat'
+
+  if (action === 'prefill-dates') {
+    input.value = [
+      'Travel dates:',
+      '- Start date: YYYY-MM-DD',
+      '- End date: YYYY-MM-DD'
+    ].join('\n')
+  } else if (action === 'prefill-budget') {
+    input.value = [
+      'Budget details:',
+      '- Total budget: $____',
+      '- Currency: USD',
+      '- Flexibility: +/- ____%'
+    ].join('\n')
+  } else if (action === 'prefill-refine') {
+    input.value = [
+      'Please refine my search with these updates:',
+      '- Priority: (price / rating / availability)',
+      '- Preferred service: (tour / car / both)',
+      '- Must-have preferences: ____'
+    ].join('\n')
+  } else {
+    // Fallback: prefill only, never auto-send.
+    input.value = fallbackText
+  }
+
+  nextTick(() => {
+    inputEl.value?.focus()
+    autoResize()
+  })
+}
+
+function editRequirementInChat(target) {
+  if (target === 'dates') {
+    applyQuickAction('prefill-dates')
+    return
+  }
+  if (target === 'budget') {
+    applyQuickAction('prefill-budget')
+    return
+  }
+  applyQuickAction('prefill-refine')
 }
 
 // ─── Generate contextual quick replies (Sprint 2) ────────────────────────────
@@ -704,22 +1073,22 @@ function generateQuickReplies(messageText, operators) {
   
   // If operators found, suggest viewing them
   if (operators && operators.length > 0) {
-    replies.push({ icon: '📍', text: 'View All Matches', message: 'Show me all the matched operators' })
+    replies.push({ icon: '📍', text: 'View All Matches', message: 'Show me all the matched operators', action: 'goto-matches' })
   }
   
   // If no dates mentioned, suggest adding them
   if (!requirements.value.travel_dates && (text.includes('trip') || text.includes('visit'))) {
-    replies.push({ icon: '📅', text: 'Add Dates', message: 'I want to travel next month' })
+    replies.push({ icon: '📅', text: 'Add Dates', message: 'I want to travel next month', action: 'prefill-dates' })
   }
   
   // If no budget mentioned
   if (!requirements.value.budget_usd && operators.length > 0) {
-    replies.push({ icon: '💰', text: 'Set Budget', message: 'My budget is around $500' })
+    replies.push({ icon: '💰', text: 'Set Budget', message: 'My budget is around $500', action: 'prefill-budget' })
   }
   
   // If requirements exist, offer to refine
   if (hasRequirements.value) {
-    replies.push({ icon: '🔍', text: 'Refine Search', message: 'Can you find more options?' })
+    replies.push({ icon: '🔍', text: 'Refine Search', message: 'Can you find more options?', action: 'prefill-refine' })
   }
   
   // Always offer to ask more
@@ -769,15 +1138,32 @@ async function addToCart(op) {
     cartStore.addToCart(plannerCartItem)
 
     addedIds.value = new Set([...addedIds.value, op.id])
+    
+    // Sprint 5: Success toast with confetti
+    toast.success(`${op.business_name} added to cart!`, 'Success')
+    triggerConfetti()
+    hapticFeedback('success')
+    
+    // Sprint 6: Screen reader announcement
+    announceToScreenReader(`${op.business_name} successfully added to cart`)
+    
     messages.value.push({
       role: 'assistant',
       text: `✅ **${op.business_name}** has been added to your cart. You can view and book it from the Cart page.`,
     })
     scrollBottom()
   } catch (err) {
+    // Sprint 5: Error toast
+    const errorMsg = err.response?.data?.detail || 'Unable to add to cart'
+    toast.error(errorMsg, 'Error')
+    hapticFeedback('error')
+    
+    // Sprint 6: Screen reader announcement
+    announceToScreenReader(`Error: ${errorMsg}`)
+    
     messages.value.push({
       role: 'assistant',
-      text: `⚠️ Could not add to cart: ${err.response?.data?.detail || 'Unknown error'}`,
+      text: `⚠️ Could not add to cart: ${errorMsg}`,
     })
   } finally {
     addingId.value = null
@@ -836,38 +1222,303 @@ function formatText(text) {
     .replace(/\n/g, '<br>')
 }
 
-function matchLabel(op) {
-  if (op.match_type === 'exact') return 'Exact match'
-  if (op.match_type === 'similar') return 'Similar match'
-  return 'Suggested match'
+function getInlineOperators(msg, idx) {
+  if (msg?.operators?.length) return msg.operators
+
+  const isLatestAssistantMessage =
+    msg?.role === 'assistant' && idx === messages.value.length - 1
+
+  if (isLatestAssistantMessage && suggestedOperators.value?.length) {
+    return suggestedOperators.value
+  }
+
+  return []
 }
 
-function matchClass(op) {
-  if (op.match_type === 'exact') return 'match-exact'
-  if (op.match_type === 'similar') return 'match-similar'
-  return 'match-fallback'
+// Sprint 3: Helper functions for Matches tab
+function getPriceValue(priceRange) {
+  if (!priceRange) return 0
+  // Extract first number from price range (e.g., "$500 - $1000" -> 500)
+  const match = priceRange.match(/\$?(\d+)/)
+  return match ? parseInt(match[1]) : 0
 }
 
-function serviceLabel(op) {
-  const mode = op.recommended_service || 'tour'
-  if (mode === 'car') return 'Car service'
-  return 'Tour service'
+// Sprint 4: Mobile gesture & interaction handlers
+
+// Haptic feedback for touch interactions
+function hapticFeedback(type = 'light') {
+  if (navigator.vibrate) {
+    const patterns = {
+      light: 10,
+      medium: 20,
+      heavy: 30,
+      success: [10, 50, 10],
+      error: [20, 100, 20]
+    }
+    navigator.vibrate(patterns[type] || 10)
+  }
 }
 
-function formatQuotaReset(value) {
-  if (!value) return 'soon'
-  return new Date(value).toLocaleString()
+// Swipe gesture detection for tab navigation
+function handleTouchStart(e) {
+  touchStartX.value = e.touches[0].clientX
+  touchStartY.value = e.touches[0].clientY
 }
+
+function handleTouchMove(e) {
+  touchEndX.value = e.touches[0].clientX
+  touchEndY.value = e.touches[0].clientY
+}
+
+function handleTouchEnd() {
+  const deltaX = touchStartX.value - touchEndX.value
+  const deltaY = touchStartY.value - touchEndY.value
+  
+  // Require horizontal swipe to be more prominent than vertical
+  if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50) {
+    const tabOrder = ['chat', 'matches', 'itinerary', 'requirements']
+    const currentIndex = tabOrder.indexOf(activeTab.value)
+    
+    if (deltaX > 0 && currentIndex < tabOrder.length - 1) {
+      // Swipe left - next tab
+      activeTab.value = tabOrder[currentIndex + 1]
+      hapticFeedback('light')
+    } else if (deltaX < 0 && currentIndex > 0) {
+      // Swipe right - previous tab
+      activeTab.value = tabOrder[currentIndex - 1]
+      hapticFeedback('light')
+    }
+  }
+}
+
+// Pull-to-refresh functionality
+function handlePullStart(e) {
+  if (messagesEl.value && messagesEl.value.scrollTop === 0) {
+    pullStartY.value = e.touches[0].clientY
+  }
+}
+
+function handlePullMove(e) {
+  if (pullStartY.value > 0) {
+    const currentY = e.touches[0].clientY
+    pullDistance.value = Math.min(Math.max(currentY - pullStartY.value, 0), 100)
+  }
+}
+
+async function handlePullEnd() {
+  if (pullDistance.value > 60) {
+    isRefreshing.value = true
+    hapticFeedback('medium')
+    await loadPlannerQuota()
+    await loadSession()
+    setTimeout(() => {
+      isRefreshing.value = false
+      pullDistance.value = 0
+      pullStartY.value = 0
+      hapticFeedback('success')
+    }, 500)
+  } else {
+    pullDistance.value = 0
+    pullStartY.value = 0
+  }
+}
+
+// Toggle FAB visibility based on scroll
+function handleScroll() {
+  if (messagesEl.value) {
+    showFAB.value = messagesEl.value.scrollTop > 200
+  }
+}
+
+// FAB action - scroll to bottom
+function scrollToBottom() {
+  hapticFeedback('light')
+  scrollBottom()
+}
+
+// FAB action - new session
+function startNewSessionFAB() {
+  hapticFeedback('medium')
+  startNewSession()
+}
+
+// Sprint 5: Confetti animation for cart additions
+function triggerConfetti() {
+  const confettiCount = 30
+  const colors = ['#10b981', '#3b82f6', '#f59e0b', '#ec4899', '#8b5cf6']
+  const confettiContainer = document.createElement('div')
+  confettiContainer.style.position = 'fixed'
+  confettiContainer.style.top = '0'
+  confettiContainer.style.left = '0'
+  confettiContainer.style.width = '100%'
+  confettiContainer.style.height = '100%'
+  confettiContainer.style.pointerEvents = 'none'
+  confettiContainer.style.zIndex = '9998'
+  document.body.appendChild(confettiContainer)
+  
+  for (let i = 0; i < confettiCount; i++) {
+    const confetti = document.createElement('div')
+    const color = colors[Math.floor(Math.random() * colors.length)]
+    const size = Math.random() * 10 + 5
+    const startX = Math.random() * window.innerWidth
+    const endX = startX + (Math.random() - 0.5) * 200
+    const rotation = Math.random() * 360
+    const duration = Math.random() * 2 + 1
+    
+    confetti.style.position = 'absolute'
+    confetti.style.width = size + 'px'
+    confetti.style.height = size + 'px'
+    confetti.style.background = color
+    confetti.style.top = '-20px'
+    confetti.style.left = startX + 'px'
+    confetti.style.borderRadius = Math.random() > 0.5 ? '50%' : '0'
+    confetti.style.opacity = '1'
+    confetti.style.transform = `rotate(${rotation}deg)`
+    
+    confettiContainer.appendChild(confetti)
+    
+    confetti.animate([
+      {
+        top: '-20px',
+        left: startX + 'px',
+        opacity: 1,
+        transform: `rotate(${rotation}deg)`
+      },
+      {
+        top: window.innerHeight + 'px',
+        left: endX + 'px',
+        opacity: 0,
+        transform: `rotate(${rotation + 720}deg)`
+      }
+    ], {
+      duration: duration * 1000,
+      easing: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)'
+    })
+  }
+  
+  setTimeout(() => {
+    document.body.removeChild(confettiContainer)
+  }, 3000)
+}
+
+// Sprint 6: Accessibility - Screen reader announcements
+function announceToScreenReader(message) {
+  screenReaderAnnouncement.value = message
+  // Clear after a brief moment so repeated messages are re-announced
+  setTimeout(() => {
+    screenReaderAnnouncement.value = ''
+  }, 1000)
+}
+
+// Sprint 6: Accessibility - Keyboard navigation helpers
+function handleEscapeKey(event) {
+  if (event.key === 'Escape') {
+    // Close any open modals or reset focus
+    event.preventDefault()
+  }
+}
+
+// Sprint 6: Accessibility - Focus management
+function trapFocus(event, container) {
+  const focusableElements = container.querySelectorAll(
+    'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  )
+  const firstElement = focusableElements[0]
+  const lastElement = focusableElements[focusableElements.length - 1]
+  
+  if (event.key === 'Tab') {
+    if (event.shiftKey && document.activeElement === firstElement) {
+      event.preventDefault()
+      lastElement.focus()
+    } else if (!event.shiftKey && document.activeElement === lastElement) {
+      event.preventDefault()
+      firstElement.focus()
+    }
+  }
+}
+
+// Sprint 5: Smooth scroll behavior
+function smoothScrollTo(element, offset = 0) {
+  if (!element) return
+  const top = element.offsetTop - offset
+  window.scrollTo({
+    top,
+    behavior: 'smooth'
+  })
+}
+
 </script>
 
 <style scoped>
+/* Sprint 6: Accessibility Styles */
+
+/* Skip Links - Hidden until focused */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: #0891b2;
+  color: white;
+  padding: 8px 16px;
+  text-decoration: none;
+  border-radius: 0 0 4px 0;
+  z-index: 10000;
+  font-weight: 600;
+  transition: top 0.2s ease;
+}
+
+.skip-link:focus {
+  top: 0;
+  outline: 3px solid #fbbf24;
+  outline-offset: 2px;
+}
+
+/* Screen Reader Only - Visually hidden but accessible to screen readers */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* Enhanced Focus Styles - WCAG AA compliant */
+*:focus {
+  outline: 2px solid #0891b2;
+  outline-offset: 2px;
+}
+
+button:focus,
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 3px solid #0891b2;
+  outline-offset: 2px;
+}
+
+/* Reduced Motion Support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* NEW LAYOUT STYLES */
 .planner-page-new {
   max-width: 1400px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
 }
 
 .planner-header {
@@ -906,39 +1557,77 @@ function formatQuotaReset(value) {
 .header-right {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
+  flex-wrap: nowrap;
 }
 
 .cart-button {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 10px 16px;
-  background: rgba(255, 255, 255, 0.8);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  min-height: 42px;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  border: 1px solid rgba(100, 116, 139, 0.35);
   border-radius: 12px;
   text-decoration: none;
   color: #0f172a;
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  white-space: nowrap;
 }
 
 .cart-button:hover {
-  background: white;
+  background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.14);
 }
 
-.temp-wrapper {
-  background: rgba(255, 255, 255, 0.5);
-  border-radius: 16px;
-  padding: 16px;
+.cart-button:focus-visible {
+  outline: 3px solid #0891b2;
+  outline-offset: 2px;
+}
+
+/* Keep a single cart entry point on touch layouts (FAB cart) */
+@media (max-width: 1024px) {
+  .header-right .cart-button {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .planner-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 14px 16px;
+  }
+
+  .planner-title {
+    font-size: 22px;
+  }
+
+  .planner-subtitle {
+    margin-left: 36px;
+    font-size: 13px;
+  }
+
+  .header-right {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }
 
 .tab-panel {
   background: rgba(255, 255, 255, 0.78);
-  border-radius: 16px;
+  border-radius: 0 0 16px 16px;
+  margin-top: -17px;
+  padding-top: 17px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-top: none;
   min-height: 400px;
 }
 
@@ -954,10 +1643,16 @@ function formatQuotaReset(value) {
 
 .planner-page {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.75rem;
   height: calc(100vh - 94px);
   min-height: calc(100vh - 94px);
+  border-radius: 0 0 16px 16px;
+  margin-top: -17px;
+  padding: 17px 16px 16px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-top: none;
+  background: rgba(255, 255, 255, 0.78);
 }
 
 .glass-card {
@@ -965,64 +1660,6 @@ function formatQuotaReset(value) {
   border: 1px solid rgba(148, 163, 184, 0.2);
   box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
   backdrop-filter: blur(16px);
-}
-
-.planner-sidebar {
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding: 0.95rem;
-  overflow-y: auto;
-  border-radius: 28px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(245, 250, 249, 0.9));
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
-  min-height: 0;
-}
-
-.planner-guide {
-  border-radius: 24px;
-}
-
-.sidebar-glow {
-  position: absolute;
-  inset: -80px auto auto -80px;
-  width: 180px;
-  height: 180px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(15, 118, 110, 0.16), transparent 68%);
-  pointer-events: none;
-}
-
-.sidebar-header h2 {
-  font-family: 'Fraunces', serif;
-  font-size: 1.35rem;
-  line-height: 1.1;
-  color: #0f172a;
-  margin: 0.25rem 0 0.4rem;
-}
-
-.eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  width: fit-content;
-  padding: 0.35rem 0.7rem;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  font-weight: 800;
-  color: #0f766e;
-  background: rgba(15, 118, 110, 0.1);
-}
-
-.sidebar-sub {
-  color: #475569;
-  font-size: 0.86rem;
-  margin: 0;
-  line-height: 1.45;
 }
 
 .req-card {
@@ -1122,6 +1759,13 @@ function formatQuotaReset(value) {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.req-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
   margin-top: 0.55rem;
 }
 
@@ -1896,14 +2540,9 @@ function formatQuotaReset(value) {
 
   .planner-page {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: 1fr;
     height: calc(100vh - 88px);
     min-height: calc(100vh - 88px);
-  }
-
-  .planner-sidebar {
-    border-radius: 24px;
-    max-height: 34vh;
   }
 
   .chat-area {
@@ -2280,4 +2919,1300 @@ function formatQuotaReset(value) {
   color: #64748b;
   font-style: italic;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SPRINT 3: MATCHES TAB CONTENT
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Matches Panel Container */
+.matches-panel {
+  padding: 0;
+}
+
+.matches-container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* Filters & Sort Controls */
+.matches-controls {
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  border-radius: 16px;
+}
+
+.controls-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.control-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.filter-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.filter-btn {
+  padding: 8px 16px;
+  background: white;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.filter-btn:hover {
+  border-color: rgba(15, 118, 110, 0.3);
+  background: rgba(15, 118, 110, 0.05);
+}
+
+.filter-btn.active {
+  background: linear-gradient(135deg, #0891b2 0%, #0f766e 100%);
+  border-color: #0891b2;
+  color: white;
+}
+
+.filter-select {
+  padding: 8px 14px;
+  background: white;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 180px;
+}
+
+.filter-select:hover {
+  border-color: rgba(15, 118, 110, 0.3);
+}
+
+.filter-select:focus {
+  outline: none;
+  border-color: #0891b2;
+  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.1);
+}
+
+.result-count {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.count-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0891b2;
+}
+
+/* Matches Grid */
+.matches-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 20px;
+}
+
+/* Match Card */
+.match-card {
+  padding: 20px;
+  border-radius: 16px;
+  transition: all 0.3s ease;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.match-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+  border-color: rgba(15, 118, 110, 0.2);
+}
+
+.match-card.match-added {
+  background: rgba(16, 185, 129, 0.03);
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+/* Card Header */
+.match-header {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 14px;
+  align-items: flex-start;
+}
+
+.match-avatar {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0891b2 0%, #0f766e 100%);
+  color: white;
+  border-radius: 12px;
+  font-size: 20px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.match-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.match-name {
+  margin: 0 0 6px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.match-rating {
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+.match-score {
+  color: #10b981;
+  font-weight: 600;
+}
+
+.match-badge {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.added-badge {
+  background: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+}
+
+/* Match Reason */
+.match-reason {
+  margin: 0 0 14px 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #475569;
+  font-style: italic;
+  background: rgba(8, 145, 178, 0.05);
+  padding: 10px 12px;
+  border-radius: 10px;
+  border-left: 3px solid #0891b2;
+}
+
+/* Service Badges */
+.match-service {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.service-badge {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge-tour {
+  background: rgba(8, 145, 178, 0.1);
+  color: #0891b2;
+}
+
+.badge-car {
+  background: rgba(139, 92, 246, 0.1);
+  color: #8b5cf6;
+}
+
+.badge-budget {
+  background: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+}
+
+/* Serving Areas */
+.match-areas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+  align-items: center;
+}
+
+.areas-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.area-tag {
+  padding: 4px 10px;
+  background: rgba(148, 163, 184, 0.1);
+  border-radius: 6px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.area-more {
+  font-size: 12px;
+  color: #64748b;
+  font-style: italic;
+}
+
+/* Description */
+.match-description {
+  margin: 0 0 14px 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #475569;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Price */
+.match-price {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  background: rgba(139, 92, 246, 0.05);
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.price-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.price-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: #8b5cf6;
+}
+
+/* Actions */
+.match-actions {
+  display: flex;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.btn-match-add {
+  flex: 1;
+  padding: 10px 18px;
+  background: linear-gradient(135deg, #0891b2 0%, #0f766e 100%);
+  border: none;
+  border-radius: 10px;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-match-add:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(8, 145, 178, 0.3);
+}
+
+.btn-match-add:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.match-added-label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 18px;
+  background: rgba(16, 185, 129, 0.1);
+  border-radius: 10px;
+  color: #10b981;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.btn-match-view {
+  padding: 10px 18px;
+  background: white;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-match-view:hover {
+  border-color: #0891b2;
+  color: #0891b2;
+  background: rgba(8, 145, 178, 0.05);
+}
+
+/* Empty State */
+.matches-empty {
+  text-align: center;
+  padding: 80px 40px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 20px;
+  border: 2px dashed rgba(148, 163, 184, 0.2);
+}
+
+.empty-icon {
+  font-size: 64px;
+  margin-bottom: 20px;
+  opacity: 0.5;
+}
+
+.matches-empty h3 {
+  margin: 0 0 12px 0;
+  font-size: 22px;
+  color: #334155;
+}
+
+.matches-empty p {
+  margin: 0 0 24px 0;
+  font-size: 15px;
+  color: #64748b;
+  max-width: 500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.btn-empty-action {
+  padding: 12px 32px;
+  background: linear-gradient(135deg, #0891b2 0%, #0f766e 100%);
+  border: none;
+  border-radius: 12px;
+  color: white;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-empty-action:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(8, 145, 178, 0.3);
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+  .matches-container {
+    padding: 16px;
+  }
+
+  .controls-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .control-group {
+    width: 100%;
+  }
+
+  .filter-buttons {
+    width: 100%;
+  }
+
+  .filter-btn {
+    flex: 1;
+  }
+
+  .filter-select {
+    width: 100%;
+  }
+
+  .result-count {
+    margin-left: 0;
+  }
+
+  .matches-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .match-header {
+    flex-wrap: wrap;
+  }
+
+  .match-badge {
+    width: 100%;
+    text-align: center;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SPRINT 4: MOBILE OPTIMIZATION STYLES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Pull-to-refresh indicator */
+.pull-refresh-indicator {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0891b2 0%, #0f766e 100%);
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  transition: height 0.1s ease, opacity 0.1s ease;
+  overflow: hidden;
+}
+
+.refresh-icon {
+  font-size: 20px;
+  margin-bottom: 4px;
+  transition: transform 0.3s ease;
+}
+
+.refresh-icon.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Floating Action Buttons */
+.fab-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 1000;
+}
+
+.fab {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, #0891b2 0%, #0f766e 100%);
+  color: white;
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(8, 145, 178, 0.3);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  text-decoration: none;
+}
+
+.fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(8, 145, 178, 0.4);
+}
+
+.fab:active {
+  transform: translateY(0) scale(0.95);
+}
+
+.fab-cart {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+}
+
+.fab-cart:hover {
+  box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
+}
+
+.fab-cart.has-items {
+  animation: pulse-cart 2s infinite;
+}
+
+@keyframes pulse-cart {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+.fab-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #ef4444;
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border: 2px solid white;
+}
+
+.fab-scroll {
+  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+  animation: fadeInUp 0.3s ease;
+}
+
+.fab-scroll:hover {
+  box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4);
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fab-new-session {
+  width: 48px;
+  height: 48px;
+  font-size: 20px;
+  background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
+  box-shadow: 0 4px 12px rgba(236, 72, 153, 0.3);
+}
+
+.fab-new-session:hover {
+  box-shadow: 0 6px 20px rgba(236, 72, 153, 0.4);
+}
+
+/* Mobile optimizations */
+@media (max-width: 768px) {
+  
+  /* Hide FABs on mobile when TabNavigation bottom bar is visible */
+  .fab-container {
+    bottom: 90px; /* Above the bottom tab bar */
+    right: 16px;
+  }
+  
+  .fab {
+    width: 48px;
+    height: 48px;
+    font-size: 20px;
+  }
+  
+  .fab-new-session {
+    width: 44px;
+    height: 44px;
+    font-size: 18px;
+  }
+  
+  /* Enhanced touch targets for all interactive elements */
+  .filter-btn,
+  .sort-btn,
+  .btn-add,
+  .btn-view,
+  .btn-empty-action {
+    min-height: 44px;
+    padding: 12px 20px;
+    font-size: 15px;
+  }
+  
+  /* Quick reply buttons larger on mobile */
+  .quick-reply-btn {
+    min-height: 44px;
+    padding: 10px 18px;
+    font-size: 15px;
+  }
+  
+  /* Inline operator card actions */
+  .inline-op-actions .btn-add-inline,
+  .inline-op-actions .btn-view-all {
+    min-height: 44px;
+    padding: 10px 18px;
+  }
+  
+  /* Chat input area optimization */
+  .input-row {
+    padding: 16px;
+    gap: 12px;
+  }
+  
+  .input-box {
+    min-height: 48px;
+    font-size: 16px; /* Prevents auto-zoom on iOS */
+    padding: 14px 16px;
+  }
+  
+  .send-btn {
+    min-width: 48px;
+    min-height: 48px;
+    font-size: 20px;
+  }
+  
+  /* Service mode buttons larger touch targets */
+  .service-btn {
+    min-height: 44px;
+    padding: 10px 16px;
+    font-size: 15px;
+  }
+  
+  /* Matches grid cards - better spacing on mobile */
+  .matches-grid {
+    gap: 16px;
+  }
+  
+  .match-card {
+    padding: 18px;
+  }
+  
+  /* Swipe gesture feedback */
+  .planner-page-new {
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: pan-y; /* Allow vertical scrolling, detect horizontal swipes */
+  }
+  
+  .tab-panel {
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+/* Tablet optimizations */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .fab-container {
+    bottom: 24px;
+    right: 24px;
+  }
+}
+
+/* Desktop - hide mobile-specific features */
+@media (min-width: 1025px) {
+  .pull-refresh-indicator {
+    display: none;
+  }
+  
+  .fab-container {
+    display: none; /* Desktop users use header cart button */
+  }
+  
+  .planner-page-new {
+    touch-action: auto;
+  }
+}
+
+/* High DPI displays */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  .fab {
+    box-shadow: 0 4px 16px rgba(8, 145, 178, 0.35);
+  }
+  
+  .fab:hover {
+    box-shadow: 0 6px 24px rgba(8, 145, 178, 0.45);
+  }
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .fab,
+  .refresh-icon,
+  .tab-panel {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* Dark mode support (future-proofing) */
+@media (prefers-color-scheme: dark) {
+  .fab {
+    box-shadow: 0 4px 12px rgba(8, 145, 178, 0.5);
+  }
+  
+  .fab-badge {
+    border-color: #1e293b;
+  }
+}
+
+/* END SPRINT 4 STYLES */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SPRINT 5: VISUAL POLISH & MICRO-INTERACTIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Global smooth scroll */
+html {
+  scroll-behavior: smooth;
+}
+
+.planner-shell *,
+.planner-page-new * {
+  scroll-behavior: smooth;
+}
+
+/* Enhanced card hover animations */
+.glass-card {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Button press micro-interaction */
+button:not(.fab):active,
+.btn-add:active,
+.btn-view:active,
+.filter-btn:active,
+.sort-btn:active {
+  transform: scale(0.96);
+  transition: transform 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Enhanced button hover states */
+.btn-add,
+.btn-view,
+.filter-btn,
+.sort-btn,
+.quick-reply-btn {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-add::before,
+.btn-view::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  transform: translate(-50%, -50%);
+  transition: width 0.6s, height 0.6s;
+}
+
+.btn-add:hover::before,
+.btn-view:hover::before {
+  width: 300px;
+  height: 300px;
+}
+
+/* Match card enhanced animations */
+.match-card {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.match-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #0891b2 0%, #0f766e 100%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: -1;
+}
+
+.match-card:hover {
+  transform: translateY(-6px) scale(1.02);
+  box-shadow: 0 16px 48px rgba(8, 145, 178, 0.2), 0 8px 16px rgba(0, 0, 0, 0.12);
+}
+
+.match-card:hover::before {
+  opacity: 0.05;
+}
+
+/* Inline operator card animations */
+.inline-operator-card {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.inline-operator-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(8, 145, 178, 0.15);
+}
+
+/* Quick reply button ripple effect */
+.quick-reply-btn {
+  position: relative;
+  overflow: hidden;
+}
+
+.quick-reply-btn::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(8, 145, 178, 0.3);
+  transform: translate(-50%, -50%);
+  transition: width 0.4s ease, height 0.4s ease;
+}
+
+.quick-reply-btn:active::after {
+  width: 200px;
+  height: 200px;
+  transition: width 0s, height 0s;
+}
+
+/* Tab transition animations */
+.tab-panel {
+  animation: fadeSlideIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes fadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Enhanced message bubble animations */
+.message {
+  animation: messageSlideIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes messageSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.message.assistant {
+  animation-name: messageSlideInRight;
+}
+
+@keyframes messageSlideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Streaming cursor pulse */
+.cursor {
+  animation: cursorPulse 0.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes cursorPulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* Status progress enhanced animation */
+.status-progress {
+  overflow: hidden;
+}
+
+.progress-bar {
+  animation: progressSlide 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes progressSlide {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Filter button selection animation */
+.filter-btn.active,
+.sort-btn.active {
+  animation: buttonActivate 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes buttonActivate {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Badge pulse animation */
+.fab-badge {
+  animation: badgePulse 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes badgePulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+}
+
+/* Operators badge entrance */
+.operators-badge {
+  animation: badgeSlideDown 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes badgeSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Match reason box enhanced */
+.match-reason {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.match-card:hover .match-reason {
+  background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+  transform: scale(1.02);
+}
+
+/* Avatar glow effect on hover */
+.match-avatar {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.match-avatar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(8, 145, 178, 0.4) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.match-card:hover .match-avatar::after {
+  opacity: 1;
+}
+
+/* Loading skeleton shimmer enhanced */
+@keyframes skeletonShimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* Input focus glow */
+.input-box:focus {
+  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.1), 0 4px 12px rgba(0, 0, 0, 0.08);
+  border-color: #0891b2;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Send button enhanced interaction */
+.send-btn {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.send-btn::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+  transform: translate(-50%, -50%);
+  transition: width 0.5s ease, height 0.5s ease;
+}
+
+.send-btn:hover::before {
+  width: 120px;
+  height: 120px;
+}
+
+.send-btn:hover {
+  transform: scale(1.05) rotate(-5deg);
+}
+
+.send-btn:active {
+  transform: scale(0.95) rotate(0deg);
+}
+
+/* Cart button badge animation */
+.cart-button {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.cart-button:hover {
+  transform: translateY(-2px);
+}
+
+.cart-button span {
+  display: inline-block;
+  animation: cartBadgeBounce 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes cartBadgeBounce {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+}
+
+/* Empty state animations */
+.empty-state,
+.welcome-state {
+  animation: emptyStateFloat 3s ease-in-out infinite;
+}
+
+@keyframes emptyStateFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.empty-icon,
+.welcome-icon {
+  animation: iconSpin 20s linear infinite;
+}
+
+@keyframes iconSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Starter chips hover effect */
+.chip {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.chip::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  transition: left 0.5s ease;
+}
+
+.chip:hover::before {
+  left: 100%;
+}
+
+.chip:hover {
+  transform: translateY(-3px) scale(1.05);
+  box-shadow: 0 8px 20px rgba(8, 145, 178, 0.2);
+}
+
+/* Service button enhanced states */
+.service-btn {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.service-btn::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #0891b2, #0f766e);
+  transform: translateX(-50%);
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.service-btn.active::after {
+  width: 80%;
+}
+
+.service-btn:hover {
+  transform: translateY(-2px);
+}
+
+/* Responsive micro-interactions */
+@media (max-width: 768px) {
+  /* Reduce animations on mobile for performance */
+  .glass-card:hover {
+    transform: translateY(-1px);
+  }
+  
+  .match-card:hover {
+    transform: translateY(-3px) scale(1.01);
+  }
+  
+  /* Disable some decorative animations on mobile */
+  .empty-state,
+  .welcome-state {
+    animation: none;
+  }
+  
+  .empty-icon,
+  .welcome-icon {
+    animation: iconSpin 40s linear infinite; /* Slower spin */
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .btn-add,
+  .btn-view,
+  .filter-btn,
+  .sort-btn {
+    border: 2px solid currentColor;
+  }
+  
+  .fab {
+    border: 2px solid white;
+  }
+}
+
+/* Print styles */
+@media print {
+  .fab-container,
+  .chat-input-area,
+  .pull-refresh-indicator,
+  .toast-container {
+    display: none !important;
+  }
+  
+  .planner-page-new {
+    max-width: 100%;
+  }
+}
+
+/* Focus visible for keyboard navigation */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #0891b2;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Selection styling */
+::selection {
+  background: rgba(8, 145, 178, 0.2);
+  color: inherit;
+}
+
+::-moz-selection {
+  background: rgba(8, 145, 178, 0.2);
+  color: inherit;
+}
+
+/* Scrollbar styling (webkit only) */
+.messages::-webkit-scrollbar {
+  width: 8px;
+}
+
+.messages::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+}
+
+.messages::-webkit-scrollbar-thumb {
+  background: rgba(8, 145, 178, 0.3);
+  border-radius: 4px;
+  transition: background 0.3s ease;
+}
+
+.messages::-webkit-scrollbar-thumb:hover {
+  background: rgba(8, 145, 178, 0.5);
+}
+
+/* END SPRINT 5 STYLES */
+
 </style>

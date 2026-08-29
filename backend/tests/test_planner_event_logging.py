@@ -124,10 +124,10 @@ class PlannerEventLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(fake_db.billing_event_log.docs), 1)
         event = fake_db.billing_event_log.docs[0]
         self.assertEqual(event["source_surface"], "planner")
-        self.assertEqual(event["event_type"], "qualified_lead")
+        self.assertEqual(event["event_type"], "intent_click")
         self.assertEqual(event["source_reference_type"], "planner_session")
         self.assertEqual(event["source_reference_id"], "session-1:operator-1:confirm")
-        self.assertEqual(event["outcome_reason"], "planner_operator_confirmed")
+        self.assertEqual(event["outcome_reason"], "planner_quote_intent_created")
         self.assertFalse(event["is_billable"])
         self.assertEqual(event["credits_charged"], 0)
         self.assertEqual(event["metadata"]["operator_name"], "Himalayan Escape Co")
@@ -204,8 +204,9 @@ class PlannerEventLoggingTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "key": "planner_billing",
                     "value": {
-                        "impression": 0,
-                        "qualified_lead": 2,
+                        "search_profile_click": 0,
+                        "planner_intent_click": 2,
+                        "qualified_lead": 0,
                         "conversion": 0,
                     },
                 }
@@ -226,14 +227,14 @@ class PlannerEventLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(event["is_billable"])
         self.assertEqual(event["credits_charged"], 2)
         self.assertEqual(event["metadata"]["configured_credits"], 2)
-        self.assertEqual(event["outcome_reason"], "planner_operator_confirmed")
+        self.assertEqual(event["outcome_reason"], "planner_quote_intent_created")
 
     async def test_save_planner_pricing_records_audit_history(self):
         fake_db = FakeDB(
             admin_settings=[
                 {
                     "key": "planner_billing",
-                    "value": {"impression": 0, "qualified_lead": 0, "conversion": 0},
+                    "value": {"search_profile_click": 0, "planner_intent_click": 0, "qualified_lead": 0, "conversion": 0},
                     "updated_by": "admin-old",
                 }
             ]
@@ -241,16 +242,16 @@ class PlannerEventLoggingTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("backend.routers.admin_billing.get_database", AsyncMock(return_value=fake_db)):
             response = await save_planner_pricing_settings(
-                PlannerPricingSettingsUpdate(impression=1, qualified_lead=2, conversion=0),
+                PlannerPricingSettingsUpdate(search_profile_click=1, planner_intent_click=2, qualified_lead=0, conversion=0),
                 admin={"_id": "admin-1"},
             )
 
-        self.assertEqual(response["settings"]["values"], {"impression": 1, "qualified_lead": 2, "conversion": 0})
+        self.assertEqual(response["settings"]["values"], {"search_profile_click": 1, "planner_intent_click": 2, "qualified_lead": 0, "conversion": 0})
         self.assertEqual(len(fake_db.admin_settings_history.docs), 1)
         history = fake_db.admin_settings_history.docs[0]
         self.assertEqual(history["key"], "planner_billing")
-        self.assertEqual(history["previous_value"], {"impression": 0, "qualified_lead": 0, "conversion": 0})
-        self.assertEqual(history["new_value"], {"impression": 1, "qualified_lead": 2, "conversion": 0})
+        self.assertEqual(history["previous_value"], {"search_profile_click": 0, "planner_intent_click": 0, "qualified_lead": 0, "conversion": 0})
+        self.assertEqual(history["new_value"], {"search_profile_click": 1, "planner_intent_click": 2, "qualified_lead": 0, "conversion": 0})
         self.assertEqual(history["changed_by"], "admin-1")
 
 

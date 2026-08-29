@@ -27,8 +27,8 @@ def _normalize_limit(value: object, *, default: int, upper_bound: int) -> int:
 
 def get_default_planner_tourist_quota_settings() -> dict:
     return {
-        "daily_limit": 3,
-        "monthly_limit": 10,
+        "daily_limit": 400,
+        "monthly_limit": 1000,
         "ad_reward_daily_credits": 1,
         "ad_reward_monthly_credits": 1,
         "promotion_reward_daily_credits": 1,
