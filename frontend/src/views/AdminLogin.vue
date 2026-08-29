@@ -101,6 +101,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import api from '../services/api'
+import { clearUserSessionStorage } from '../utils/authSession'
 import brandLogo from '../../resources/logo/app_logo_compact.svg'
 import { adminBrandConfig } from '../config/adminBrand'
 
@@ -140,6 +141,9 @@ const handleLogin = async () => {
       // Store admin token and info
       const token = response.data.access_token
       const admin = response.data.admin
+
+      // Successful admin login must evict any existing user session data.
+      clearUserSessionStorage()
 
       // Store in localStorage
       localStorage.setItem('adminToken', token)

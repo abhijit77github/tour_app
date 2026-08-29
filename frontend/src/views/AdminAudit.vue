@@ -427,6 +427,164 @@
         </div>
       </div>
 
+      <div class="authz-report-card">
+        <div class="authz-report-header">
+          <div>
+            <h3>Authorization Decisions</h3>
+            <p>Live RBAC allow/deny observability for admin and operator surfaces.</p>
+          </div>
+          <button @click="loadAuthorizationReport" class="btn btn-secondary" :disabled="authzLoading">
+            {{ authzLoading ? 'Refreshing...' : 'Refresh' }}
+          </button>
+        </div>
+
+        <div class="authz-controls">
+          <select v-model.number="authzFilters.hours" class="filter-select">
+            <option :value="1">Last 1 hour</option>
+            <option :value="6">Last 6 hours</option>
+            <option :value="24">Last 24 hours</option>
+            <option :value="72">Last 72 hours</option>
+            <option :value="168">Last 7 days</option>
+          </select>
+
+          <select v-model="authzFilters.principalType" class="filter-select">
+            <option value="">All principals</option>
+            <option value="admin">Admin</option>
+            <option value="user">User</option>
+          </select>
+
+          <select v-model="authzFilters.decision" class="filter-select">
+            <option value="">All decisions</option>
+            <option value="allowed">Allowed</option>
+            <option value="denied">Denied</option>
+          </select>
+
+          <input
+            v-model.trim="authzFilters.permission"
+            type="text"
+            placeholder="Permission filter"
+            class="search-input"
+          />
+
+          <input
+            v-model.trim="authzFilters.pathContains"
+            type="text"
+            placeholder="Path contains"
+            class="search-input"
+          />
+        </div>
+
+        <div v-if="authzError" class="error-message">{{ authzError }}</div>
+
+        <div class="authz-summary-grid">
+          <div class="authz-summary-item">
+            <p class="authz-label">Total Decisions</p>
+            <p class="authz-value">{{ authzSummary.total }}</p>
+          </div>
+          <div class="authz-summary-item allowed">
+            <p class="authz-label">Allowed</p>
+            <p class="authz-value">{{ authzSummary.allowed }}</p>
+          </div>
+          <div class="authz-summary-item denied">
+            <p class="authz-label">Denied</p>
+            <p class="authz-value">{{ authzSummary.denied }}</p>
+          </div>
+          <div class="authz-summary-item rate">
+            <p class="authz-label">Denial Rate</p>
+            <p class="authz-value">{{ authzSummary.denialRate }}%</p>
+          </div>
+        </div>
+
+        <div class="authz-trend-card">
+          <div class="authz-trend-header">
+            <h4>Allowed vs Denied Trend</h4>
+            <span class="mini-meta">{{ authzFilters.hours }}h window</span>
+          </div>
+          <svg viewBox="0 0 220 42" class="authz-sparkline" role="img" aria-label="Authorization decisions trend">
+            <polyline :points="authzAllowedPoints" class="sparkline-line allowed" />
+            <polyline :points="authzDeniedPoints" class="sparkline-line denied" />
+          </svg>
+          <div class="authz-legend">
+            <span class="legend-item"><span class="legend-dot allowed"></span>Allowed</span>
+            <span class="legend-item"><span class="legend-dot denied"></span>Denied</span>
+          </div>
+        </div>
+
+        <div class="authz-breakdown-grid">
+          <div class="authz-list-card">
+            <h4>Top Denied Permissions</h4>
+            <div v-if="authzTopDeniedPermissions.length === 0" class="mini-empty">No denied permissions in selected window.</div>
+            <div v-else class="mini-list">
+              <div v-for="item in authzTopDeniedPermissions" :key="`perm-${item.permission}`" class="mini-row">
+                <span class="mini-name">{{ item.permission }}</span>
+                <span class="mini-count">{{ item.count }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="authz-list-card">
+            <h4>Top Denied Routes</h4>
+            <div v-if="authzTopDeniedRoutes.length === 0" class="mini-empty">No denied routes in selected window.</div>
+            <div v-else class="mini-list">
+              <div v-for="item in authzTopDeniedRoutes" :key="`route-${item.route}`" class="mini-row">
+                <span class="mini-name">{{ item.route }}</span>
+                <span class="mini-count">{{ item.count }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="authz-list-card">
+            <h4>Principal Breakdown</h4>
+            <div v-if="authzPrincipalBreakdown.length === 0" class="mini-empty">No principal activity in selected window.</div>
+            <div v-else class="mini-list">
+              <div v-for="item in authzPrincipalBreakdown" :key="`principal-${item.principal_type}`" class="mini-row stacked">
+                <span class="mini-name">{{ item.principal_type }}</span>
+                <span class="mini-meta">A: {{ item.allowed }} | D: {{ item.denied }} | T: {{ item.total }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="authz-events-table-wrap">
+          <h4>Recent Authorization Decisions</h4>
+          <div v-if="authzEvents.length === 0" class="mini-empty">No authorization decisions available for current filters.</div>
+          <table v-else class="authz-events-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Principal</th>
+                <th>Decision</th>
+                <th>Permission</th>
+                <th>Route</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template v-for="(event, index) in authzEvents" :key="authzEventKey(event, index)">
+                <tr class="authz-row" @click="toggleAuthzRow(authzEventKey(event, index))">
+                  <td>
+                    <span class="expand-indicator">{{ isAuthzRowExpanded(authzEventKey(event, index)) ? '▼' : '▶' }}</span>
+                    {{ formatDateTime(event.timestamp) }}
+                  </td>
+                  <td>{{ event.principal_type || 'unknown' }}</td>
+                  <td>
+                    <span :class="['decision-pill', event.decision === 'denied' ? 'denied' : 'allowed']">
+                      {{ event.decision || 'unknown' }}
+                    </span>
+                  </td>
+                  <td>{{ event.permission || 'none' }}</td>
+                  <td>{{ event.method }} {{ event.path }}</td>
+                </tr>
+                <tr v-if="isAuthzRowExpanded(authzEventKey(event, index))" class="authz-row-expanded">
+                  <td colspan="5">
+                    <div class="authz-detail-text">{{ event.detail || 'No additional detail recorded.' }}</div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="security-controls">
         <input
           v-model="securitySearch"
@@ -811,9 +969,12 @@ import { adminBrandConfig } from '../config/adminBrand'
 const activeTab = ref('activity')
 const loading = ref(false)
 const loadError = ref('')
+const authzLoading = ref(false)
+const authzError = ref('')
 const adminBrand = adminBrandConfig
 const defaultAuditPerPage = 10
 let auditReloadTimer = null
+let authzReloadTimer = null
 let suppressAuditWatch = false
 
 const createPaginationState = (overrides = {}) => ({
@@ -1035,6 +1196,69 @@ const suspiciousActivities = ref(5)
 const anomaliesDetected = ref(3)
 const rateLimitHits = ref(18)
 
+const authzFilters = ref({
+  hours: 24,
+  principalType: '',
+  decision: '',
+  permission: '',
+  pathContains: '',
+})
+const authzSummary = ref({
+  total: 0,
+  allowed: 0,
+  denied: 0,
+  denialRate: 0,
+})
+const authzTopDeniedPermissions = ref([])
+const authzTopDeniedRoutes = ref([])
+const authzPrincipalBreakdown = ref([])
+const authzEvents = ref([])
+const authzTrendEvents = ref([])
+const expandedAuthzRows = ref({})
+
+const authzTrendBuckets = computed(() => {
+  const bucketCount = 12
+  const hours = Math.max(1, Number(authzFilters.value.hours || 24))
+  const nowMs = Date.now()
+  const windowMs = hours * 60 * 60 * 1000
+  const startMs = nowMs - windowMs
+  const buckets = Array.from({ length: bucketCount }, () => ({ allowed: 0, denied: 0 }))
+
+  for (const event of authzTrendEvents.value) {
+    const ts = Date.parse(event?.timestamp || '')
+    if (Number.isNaN(ts) || ts < startMs || ts > nowMs) {
+      continue
+    }
+    const ratio = (ts - startMs) / windowMs
+    const idx = Math.min(bucketCount - 1, Math.max(0, Math.floor(ratio * bucketCount)))
+    const decisionValue = String(event?.decision || '').toLowerCase()
+    if (decisionValue === 'denied') {
+      buckets[idx].denied += 1
+    } else if (decisionValue === 'allowed') {
+      buckets[idx].allowed += 1
+    }
+  }
+
+  return buckets
+})
+
+const buildSparklinePoints = (decisionKey) => {
+  const buckets = authzTrendBuckets.value
+  const width = 220
+  const height = 42
+  const maxValue = Math.max(1, ...buckets.map((bucket) => Math.max(bucket.allowed, bucket.denied)))
+  return buckets
+    .map((bucket, index) => {
+      const x = (index / Math.max(1, buckets.length - 1)) * (width - 4) + 2
+      const y = height - 2 - ((Number(bucket[decisionKey]) || 0) / maxValue) * (height - 6)
+      return `${x.toFixed(2)},${y.toFixed(2)}`
+    })
+    .join(' ')
+}
+
+const authzAllowedPoints = computed(() => buildSparklinePoints('allowed'))
+const authzDeniedPoints = computed(() => buildSparklinePoints('denied'))
+
 // Export & Analysis
 const exportFormat = ref('csv')
 const exportLogs = ref({
@@ -1174,6 +1398,55 @@ const loadAuditSummary = async () => {
   }
 }
 
+const queueAuthorizationReload = () => {
+  if (authzReloadTimer) {
+    clearTimeout(authzReloadTimer)
+  }
+  authzReloadTimer = setTimeout(() => {
+    authzReloadTimer = null
+    loadAuthorizationReport()
+  }, 300)
+}
+
+const loadAuthorizationReport = async () => {
+  if (activeTab.value !== 'security') {
+    return
+  }
+
+  authzLoading.value = true
+  authzError.value = ''
+  try {
+    const response = await api.get('/admin/audit/authorization-decisions', {
+      params: {
+        hours: authzFilters.value.hours,
+        limit: 50,
+        principal_type: authzFilters.value.principalType,
+        decision: authzFilters.value.decision,
+        permission: authzFilters.value.permission,
+        path_contains: authzFilters.value.pathContains,
+      },
+    })
+    const data = response.data || {}
+    authzSummary.value = {
+      total: Number(data.summary?.total || 0),
+      allowed: Number(data.summary?.allowed || 0),
+      denied: Number(data.summary?.denied || 0),
+      denialRate: Number(data.summary?.denialRate || 0),
+    }
+    authzTopDeniedPermissions.value = Array.isArray(data.topDeniedPermissions) ? data.topDeniedPermissions : []
+    authzTopDeniedRoutes.value = Array.isArray(data.topDeniedRoutes) ? data.topDeniedRoutes : []
+    authzPrincipalBreakdown.value = Array.isArray(data.principalBreakdown) ? data.principalBreakdown : []
+    authzTrendEvents.value = Array.isArray(data.events) ? data.events : []
+    authzEvents.value = Array.isArray(data.events) ? data.events.slice(0, 12) : []
+    expandedAuthzRows.value = {}
+  } catch (error) {
+    console.error('Failed to load authorization report:', error)
+    authzError.value = error.response?.data?.detail || 'Failed to load authorization decision report'
+  } finally {
+    authzLoading.value = false
+  }
+}
+
 onMounted(() => {
   loadAuditSummary()
 })
@@ -1182,6 +1455,16 @@ onUnmounted(() => {
   if (auditReloadTimer) {
     clearTimeout(auditReloadTimer)
     auditReloadTimer = null
+  }
+  if (authzReloadTimer) {
+    clearTimeout(authzReloadTimer)
+    authzReloadTimer = null
+  }
+})
+
+watch(activeTab, (nextTab) => {
+  if (nextTab === 'security') {
+    loadAuthorizationReport()
   }
 })
 
@@ -1206,6 +1489,21 @@ watch([() => securitySearch.value, () => securityFilters.value.eventType, () => 
   securityPage.value = 1
   queueAuditReload()
 })
+
+watch(
+  [
+    () => authzFilters.value.hours,
+    () => authzFilters.value.principalType,
+    () => authzFilters.value.decision,
+    () => authzFilters.value.permission,
+    () => authzFilters.value.pathContains,
+  ],
+  () => {
+    if (activeTab.value === 'security') {
+      queueAuthorizationReload()
+    }
+  }
+)
 
 // Methods
 const formatDateTime = (date) => {
@@ -1264,6 +1562,21 @@ const getSecurityStatus = () => {
   if (securityScore.value >= 80) return 'good'
   if (securityScore.value >= 70) return 'fair'
   return 'poor'
+}
+
+const authzEventKey = (event, index) => {
+  return `${event?.timestamp || 'na'}|${event?.principal_id || event?.principal_type || 'na'}|${event?.method || 'na'}|${event?.path || 'na'}|${index}`
+}
+
+const isAuthzRowExpanded = (key) => {
+  return Boolean(expandedAuthzRows.value[key])
+}
+
+const toggleAuthzRow = (key) => {
+  expandedAuthzRows.value = {
+    ...expandedAuthzRows.value,
+    [key]: !expandedAuthzRows.value[key],
+  }
 }
 
 const viewActivityDetail = (activity) => {
@@ -1884,6 +2197,285 @@ const resetExportForm = () => {
   border-left-color: #3b82f6;
 }
 
+.authz-report-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.authz-report-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.authz-report-header h3 {
+  margin: 0;
+  color: #1a202c;
+}
+
+.authz-report-header p {
+  margin: 0.35rem 0 0 0;
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.authz-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.authz-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.authz-summary-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.9rem;
+  background: #f8fafc;
+}
+
+.authz-summary-item.allowed {
+  background: #ecfdf5;
+  border-color: #86efac;
+}
+
+.authz-summary-item.denied {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+
+.authz-summary-item.rate {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+
+.authz-label {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.authz-value {
+  margin: 0.35rem 0 0 0;
+  color: #0f172a;
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.authz-breakdown-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.authz-trend-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.85rem;
+  background: #ffffff;
+  margin-bottom: 1rem;
+}
+
+.authz-trend-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.45rem;
+}
+
+.authz-trend-header h4 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #1e293b;
+}
+
+.authz-sparkline {
+  width: 100%;
+  max-width: 100%;
+  height: 44px;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+
+.sparkline-line {
+  fill: none;
+  stroke-width: 2;
+}
+
+.sparkline-line.allowed {
+  stroke: #16a34a;
+}
+
+.sparkline-line.denied {
+  stroke: #dc2626;
+}
+
+.authz-legend {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.4rem;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: #475569;
+  font-size: 0.8rem;
+}
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.legend-dot.allowed {
+  background: #16a34a;
+}
+
+.legend-dot.denied {
+  background: #dc2626;
+}
+
+.authz-list-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.85rem;
+  background: #ffffff;
+}
+
+.authz-list-card h4 {
+  margin: 0 0 0.6rem 0;
+  font-size: 0.95rem;
+  color: #1e293b;
+}
+
+.mini-empty {
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.mini-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.mini-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.mini-row.stacked {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.mini-name {
+  color: #0f172a;
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+.mini-count {
+  color: #334155;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.mini-meta {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.authz-events-table-wrap {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.85rem;
+  overflow-x: auto;
+}
+
+.authz-events-table-wrap h4 {
+  margin: 0 0 0.6rem 0;
+  font-size: 0.95rem;
+  color: #1e293b;
+}
+
+.authz-events-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+}
+
+.authz-events-table th,
+.authz-events-table td {
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 0.55rem;
+  vertical-align: top;
+}
+
+.authz-row {
+  cursor: pointer;
+}
+
+.authz-row:hover td {
+  background: #f8fafc;
+}
+
+.expand-indicator {
+  display: inline-block;
+  width: 1rem;
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+.authz-row-expanded td {
+  background: #f8fafc;
+}
+
+.authz-detail-text {
+  font-size: 0.84rem;
+  color: #334155;
+  white-space: pre-wrap;
+}
+
+.decision-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.decision-pill.allowed {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.decision-pill.denied {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 /* Security Events */
 .security-events-container {
   display: flex;
@@ -2462,7 +3054,8 @@ const resetExportForm = () => {
   .filter-controls,
   .system-controls,
   .sessions-controls,
-  .security-controls {
+  .security-controls,
+  .authz-controls {
     flex-direction: column;
   }
 

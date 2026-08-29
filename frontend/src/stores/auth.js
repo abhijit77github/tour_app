@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import api from '../services/api'
+import { clearAdminSessionStorage } from '../utils/authSession'
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
@@ -64,6 +65,10 @@ export const useAuthStore = defineStore('auth', {
       this.error = null
       try {
         const response = await api.post('/auth/login', credentials)
+
+        // Successful user login must evict any existing admin session data.
+        clearAdminSessionStorage()
+
         this.token = response.data.access_token
         localStorage.setItem('token', this.token)
         
