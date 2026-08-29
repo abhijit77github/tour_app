@@ -458,7 +458,7 @@ const loadAnalytics = async () => {
     const [planRes, analyticsRes, ledgerRes] = await Promise.all([
       api.get('/operator/billing/plan'),
       api.get(`/operator/billing/analytics?days=${selectedDays.value}`),
-      api.get('/operator/billing/ledger?limit=20'),
+      api.get('/operator/billing/ledger?page_size=20'),
     ])
 
     planState.value = planRes.data

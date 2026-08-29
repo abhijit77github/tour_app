@@ -203,11 +203,55 @@ async def startup_event():
         await db.plan_orders.create_index("order_code", unique=True)
         await db.plan_orders.create_index([("operator_profile_id", 1), ("created_at", -1)])
         await db.plan_orders.create_index([("order_status", 1), ("payment_status", 1), ("created_at", -1)])
-        await db.plan_orders.create_index([("operator_profile_id", 1), ("client_request_id", 1)])
+        await db.plan_orders.create_index([("order_status", 1), ("expires_at", 1)])
+        # Migrate old non-unique index to a partial unique idempotency index.
+        try:
+            await db.plan_orders.drop_index("operator_profile_id_1_client_request_id_1")
+        except Exception:
+            pass
+        await db.plan_orders.create_index(
+            [("operator_profile_id", 1), ("client_request_id", 1)],
+            unique=True,
+            partialFilterExpression={"client_request_id": {"$exists": True, "$type": "string"}},
+            name="operator_profile_id_1_client_request_id_1_partial_unique",
+        )
+        await db.plan_orders.create_index(
+            [("operator_profile_id", 1)],
+            unique=True,
+            partialFilterExpression={
+                "order_status": {
+                    "$in": ["pending_payment", "payment_pending", "payment_received", "fulfillment_pending"]
+                }
+            },
+            name="operator_profile_id_1_open_order_unique",
+        )
         await db.credit_ledger.create_index([("operator_profile_id", 1), ("created_at", -1)])
+        await db.credit_ledger.create_index(
+            "idempotency_key",
+            unique=True,
+            partialFilterExpression={"idempotency_key": {"$exists": True, "$type": "string"}},
+            name="credit_ledger_idempotency_key_unique",
+        )
+        await db.credit_ledger.create_index(
+            "billing_event_idempotency_key",
+            unique=True,
+            partialFilterExpression={
+                "entry_type": "debit",
+                "billing_event_idempotency_key": {"$exists": True, "$type": "string"},
+            },
+            name="credit_ledger_billing_event_idempotency_key_debit_unique",
+        )
         await db.billing_event_log.create_index("idempotency_key", unique=True)
         await db.billing_event_log.create_index([("operator_profile_id", 1), ("created_at", -1)])
         await db.billing_event_log.create_index([("promotion_id", 1), ("created_at", -1)])
+        await db.billing_webhook_events.create_index("idempotency_key", unique=True)
+        await db.billing_webhook_events.create_index([("provider", 1), ("event_id", 1), ("created_at", -1)])
+        await db.billing_webhook_events.create_index([("order_code", 1), ("created_at", -1)])
+        await db.billing_webhook_events.create_index(
+            "created_at",
+            expireAfterSeconds=max(1, int(settings.billing_webhook_event_retention_days)) * 24 * 60 * 60,
+            name="billing_webhook_events_created_at_ttl",
+        )
 
         existing_plan_codes = set(await db.billing_plans.distinct("code"))
         default_plan_rows = []

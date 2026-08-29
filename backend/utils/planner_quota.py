@@ -40,7 +40,7 @@ def _normalize_planner_tourist_quota_settings(values: Optional[dict]) -> dict:
     source = values if isinstance(values, dict) else {}
     defaults = get_default_planner_tourist_quota_settings()
     return {
-        "daily_limit": _normalize_limit(source.get("daily_limit"), default=defaults["daily_limit"], upper_bound=100),
+        "daily_limit": _normalize_limit(source.get("daily_limit"), default=defaults["daily_limit"], upper_bound=400),
         "monthly_limit": _normalize_limit(source.get("monthly_limit"), default=defaults["monthly_limit"], upper_bound=1000),
         "ad_reward_daily_credits": _normalize_limit(source.get("ad_reward_daily_credits"), default=defaults["ad_reward_daily_credits"], upper_bound=20),
         "ad_reward_monthly_credits": _normalize_limit(source.get("ad_reward_monthly_credits"), default=defaults["ad_reward_monthly_credits"], upper_bound=100),

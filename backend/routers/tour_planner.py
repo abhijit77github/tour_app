@@ -32,6 +32,7 @@ from ..models.planner_quota import PlannerRewardGrantRequest
 from ..routers.itineraries import search_itinerary_templates
 from ..routers.auth import get_current_user
 from ..utils.billing import append_planner_billing_event, build_request_fingerprint
+from ..utils.billing import build_planner_impression_source_reference
 from ..utils.planner_quota import consume_tourist_planner_request_quota, get_tourist_planner_quota_status, grant_tourist_planner_reward
 
 logger = logging.getLogger(__name__)
@@ -841,7 +842,10 @@ async def planner_chat(
                                 operator_profile_id=op["id"],
                                 event_type="impression",
                                 source_reference_type="planner_session",
-                                source_reference_id=f"{req.session_id}:{op['id']}:impression",
+                                source_reference_id=build_planner_impression_source_reference(
+                                    session_id=req.session_id,
+                                    operator_profile_id=op["id"],
+                                ),
                                 anonymous_session_id=req.session_id,
                                 request_fingerprint=build_request_fingerprint(
                                     session_id=req.session_id,

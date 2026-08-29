@@ -51,6 +51,16 @@ class Settings(BaseSettings):
     planner_conversion_credits: int = 0
     search_profile_click_credits: int = 1
     planner_intent_click_credits: int = 0
+    billing_search_click_dedupe_minutes: int = 30
+    billing_search_click_identity_mode: str = "session_first"
+    billing_planner_impression_scope: str = "session"
+    billing_refund_compensation_mode: str = "manual"
+
+    # Payment gateway webhook scaffolding
+    razorpay_webhook_secret: Optional[str] = None
+    stripe_webhook_secret: Optional[str] = None
+    payu_webhook_secret: Optional[str] = None
+    billing_webhook_event_retention_days: int = 180
 
     # Backup and restore
     backup_local_dir: str = "backups"

@@ -1,7 +1,10 @@
 from datetime import datetime, timedelta, timezone
+import csv
+import io
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from ..database import get_database
 from ..models.billing import (
@@ -10,16 +13,23 @@ from ..models.billing import (
     CreditAdjustmentRequest,
     PlanOrderSettlementRequest,
     PlannerPricingSettingsUpdate,
+    RefundCreditCompensationRequest,
     ProviderPlanAssignRequest,
 )
 from ..models.planner_quota import PlannerTouristQuotaSettingsUpdate
 from ..routers.admin import get_current_admin
 from ..utils.billing import (
     PLANNER_BILLING_SETTINGS_KEY,
+    apply_refund_credit_compensation,
+    apply_webhook_event_to_order,
     apply_credit_adjustment,
     assign_plan_to_operator,
+    build_credit_anomaly_counters,
+    build_credit_event_reconciliation_report,
     complete_operator_plan_order,
+    expire_stale_plan_orders,
     get_planner_pricing_settings_document,
+    repair_credit_event_mismatches,
 )
 from ..utils.planner_quota import PLANNER_TOURIST_QUOTA_SETTINGS_KEY, get_planner_tourist_quota_settings_document
 
@@ -112,6 +122,39 @@ def _serialize_plan_order(doc: dict) -> dict:
     return serialized
 
 
+async def _find_related_webhook_event(db, *, order: dict, payload: PlanOrderSettlementRequest) -> dict | None:
+    lookup_values = [
+        ("event_id", payload.gateway_payment_id),
+        ("gateway_payment_id", payload.gateway_payment_id),
+        ("gateway_order_id", payload.gateway_order_id),
+        ("payment_reference", payload.payment_reference),
+        ("order_code", order.get("order_code")),
+        ("gateway_order_id", order.get("gateway_order_id")),
+        ("gateway_payment_id", order.get("gateway_payment_id")),
+        ("payment_reference", order.get("payment_reference")),
+    ]
+    for key, value in lookup_values:
+        if not value:
+            continue
+        matched = await db.billing_webhook_events.find_one({key: value}, sort=[("created_at", -1)])
+        if matched:
+            return matched
+    return None
+
+
+def _build_settlement_gateway_metadata(base_metadata: dict, webhook_event: dict | None) -> dict:
+    merged = dict(base_metadata or {})
+    if not webhook_event:
+        return merged
+
+    merged.setdefault("settlement_source", "webhook")
+    merged.setdefault("webhook_event_id", webhook_event.get("event_id"))
+    merged.setdefault("webhook_provider", webhook_event.get("provider"))
+    merged.setdefault("webhook_event_type", webhook_event.get("event_type"))
+    merged.setdefault("webhook_idempotency_key", webhook_event.get("idempotency_key"))
+    return merged
+
+
 async def _attach_tourist_identity(db, doc: dict) -> dict:
     serialized = _serialize_document(doc)
     tourist_user = await db.users.find_one({"_id": ObjectId(serialized["user_id"])}) if serialized.get("user_id") and ObjectId.is_valid(serialized["user_id"]) else None
@@ -144,7 +187,7 @@ async def create_billing_plan(
     if existing:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Billing plan code already exists")
 
-    data["created_at"] = data["updated_at"] = admin_created_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    data["created_at"] = data["updated_at"] = admin_created_at = datetime.now(timezone.utc)
     data["created_by"] = admin.get("_id")
     result = await db.billing_plans.insert_one(data)
     data["_id"] = result.inserted_id
@@ -161,7 +204,7 @@ async def update_billing_plan(
     update_data = {key: value for key, value in updates.model_dump().items() if value is not None}
     if not update_data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No data to update")
-    update_data["updated_at"] = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    update_data["updated_at"] = datetime.now(timezone.utc)
     update_data["updated_by"] = admin.get("_id")
     try:
         result = await db.billing_plans.update_one({"_id": ObjectId(plan_id)}, {"$set": update_data})
@@ -277,16 +320,22 @@ async def complete_plan_order(
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan order not found")
 
+    webhook_event = await _find_related_webhook_event(db, order=order, payload=payload)
+    payment_reference = payload.payment_reference or (webhook_event or {}).get("payment_reference")
+    gateway_payment_id = payload.gateway_payment_id or (webhook_event or {}).get("gateway_payment_id")
+    gateway_order_id = payload.gateway_order_id or (webhook_event or {}).get("gateway_order_id")
+    gateway_metadata = _build_settlement_gateway_metadata(payload.gateway_metadata, webhook_event)
+
     try:
         completed = await complete_operator_plan_order(
             db,
             order=order,
             actor_id=admin.get("_id"),
-            payment_reference=payload.payment_reference,
-            gateway_payment_id=payload.gateway_payment_id,
-            gateway_order_id=payload.gateway_order_id,
+            payment_reference=payment_reference,
+            gateway_payment_id=gateway_payment_id,
+            gateway_order_id=gateway_order_id,
             settlement_notes=payload.settlement_notes,
-            gateway_metadata=payload.gateway_metadata,
+            gateway_metadata=gateway_metadata,
         )
     except ValueError as exc:
         if str(exc) == "order_not_completable":
@@ -296,6 +345,176 @@ async def complete_plan_order(
     return {
         "message": "Plan order settled and provider credits activated",
         "order": _serialize_plan_order(completed),
+    }
+
+
+@router.get("/webhook-events")
+async def list_billing_webhook_events(
+    provider: str | None = None,
+    order_code: str | None = None,
+    event_id: str | None = None,
+    processed: bool | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    admin: dict = Depends(get_current_admin),
+):
+    db = await get_database()
+    _ = admin
+    query = {}
+    if provider:
+        query["provider"] = provider.strip().lower()
+    if order_code:
+        query["order_code"] = order_code
+    if event_id:
+        query["event_id"] = event_id
+    if processed is not None:
+        query["processed"] = processed
+
+    rows = []
+    docs = await db.billing_webhook_events.find(query).sort([("created_at", -1), ("_id", -1)]).limit(limit).to_list(length=limit)
+    for row in docs:
+        rows.append(_serialize_document(row))
+    return {"events": rows, "count": len(rows)}
+
+
+@router.get("/webhook-events/{idempotency_key}")
+async def get_billing_webhook_event(
+    idempotency_key: str,
+    admin: dict = Depends(get_current_admin),
+):
+    db = await get_database()
+    _ = admin
+    event = await db.billing_webhook_events.find_one({"idempotency_key": idempotency_key})
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook event not found")
+    return {"event": _serialize_document(event)}
+
+
+@router.post("/webhook-events/{idempotency_key}/reprocess")
+async def reprocess_billing_webhook_event(
+    idempotency_key: str,
+    admin: dict = Depends(get_current_admin),
+):
+    db = await get_database()
+    event = await db.billing_webhook_events.find_one({"idempotency_key": idempotency_key})
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook event not found")
+
+    order = None
+    if event.get("order_code"):
+        order = await db.plan_orders.find_one({"order_code": event.get("order_code")})
+    if not order and event.get("gateway_order_id"):
+        order = await db.plan_orders.find_one({"gateway_order_id": event.get("gateway_order_id")})
+
+    order_update_applied = False
+    if order:
+        order_update_applied = await apply_webhook_event_to_order(
+            db,
+            order=order,
+            provider=str(event.get("provider") or ""),
+            event_id=event.get("event_id"),
+            event_type=str(event.get("event_type") or ""),
+            payment_reference=event.get("payment_reference"),
+            gateway_payment_id=event.get("gateway_payment_id"),
+            gateway_order_id=event.get("gateway_order_id"),
+            actor_id=f"admin:{admin.get('_id')}",
+            note_prefix="Admin webhook replay",
+        )
+
+    replayed_at = datetime.now(timezone.utc)
+    await db.billing_webhook_events.update_one(
+        {"_id": event["_id"]},
+        {
+            "$set": {
+                "processed": True,
+                "processed_at": replayed_at,
+                "order_found": bool(order),
+                "order_update_applied": order_update_applied,
+                "last_reprocessed_at": replayed_at,
+                "last_reprocessed_by": admin.get("_id"),
+                "updated_at": replayed_at,
+            },
+            "$push": {
+                "reprocess_history": {
+                    "timestamp": replayed_at,
+                    "actor_id": admin.get("_id"),
+                    "order_found": bool(order),
+                    "order_update_applied": order_update_applied,
+                }
+            },
+        },
+    )
+    refreshed_event = await db.billing_webhook_events.find_one({"_id": event["_id"]})
+
+    return {
+        "message": "Webhook event reprocess completed",
+        "event": _serialize_document(refreshed_event),
+        "order_found": bool(order),
+        "order_update_applied": order_update_applied,
+    }
+
+
+@router.post("/plan-orders/expire-stale")
+async def expire_stale_orders(
+    limit: int = Query(default=500, ge=1, le=2000),
+    admin: dict = Depends(get_current_admin),
+):
+    db = await get_database()
+    _ = admin
+    result = await expire_stale_plan_orders(db, limit=limit)
+    return {
+        "message": "Stale plan-order expiry run completed",
+        "matched": result.get("matched", 0),
+        "expired": result.get("expired", 0),
+    }
+
+
+@router.post("/plan-orders/{order_id}/refund-compensation")
+async def apply_refund_compensation(
+    order_id: str,
+    payload: RefundCreditCompensationRequest,
+    admin: dict = Depends(get_current_admin),
+):
+    db = await get_database()
+    try:
+        order = await db.plan_orders.find_one({"_id": ObjectId(order_id)})
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid order_id") from exc
+
+    if not order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan order not found")
+
+    try:
+        result = await apply_refund_credit_compensation(
+            db,
+            order=order,
+            actor_id=admin.get("_id"),
+            notes=payload.notes,
+        )
+    except ValueError as exc:
+        reason = str(exc)
+        if reason == "order_not_refund_completed":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Order must be completed with refunded payment status") from exc
+        if reason == "provider_plan_not_found":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider plan not found for operator") from exc
+        if reason == "no_compensation_credits":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Order plan has no compensation credits") from exc
+        raise
+
+    subscription = await db.provider_plans.find_one({"operator_profile_id": order.get("operator_profile_id")})
+    message = "Refund compensation processed"
+    if not result.get("applied"):
+        reason = result.get("reason")
+        if reason == "already_compensated":
+            message = "Refund compensation already applied"
+        elif reason == "compensation_in_progress":
+            message = "Refund compensation is currently in progress"
+        else:
+            message = "Refund compensation not applied"
+
+    return {
+        "message": message,
+        "result": result,
+        "subscription": _serialize_document(subscription) if subscription else None,
     }
 
 
@@ -626,3 +845,192 @@ async def list_billing_events(
     async for row in cursor:
         rows.append(_serialize_document(row))
     return {"events": rows, "count": len(rows)}
+
+
+@router.get("/reconciliation/credit-events")
+async def reconcile_credit_events(
+    days: int = Query(default=30, ge=1, le=180),
+    limit: int = Query(default=200, ge=1, le=2000),
+    admin: dict = Depends(get_current_admin),
+):
+    db = await get_database()
+    _ = admin
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    report = await build_credit_event_reconciliation_report(db, since=since, limit=limit)
+
+    def _sanitize_issue(issue: dict) -> dict:
+        event = _serialize_document(issue.get("event") or {}) if issue.get("event") else None
+        ledger = issue.get("ledger")
+        if isinstance(ledger, list):
+            ledger = [_serialize_document(row) for row in ledger]
+        elif isinstance(ledger, dict):
+            ledger = _serialize_document(ledger)
+        else:
+            ledger = None
+        return {
+            "type": issue.get("type"),
+            "operator_profile_id": issue.get("operator_profile_id"),
+            "event": event,
+            "ledger": ledger,
+        }
+
+    issues = [_sanitize_issue(row) for row in report.get("issues", [])]
+    orphan_debits = [_serialize_document(row) for row in report.get("orphan_debits", [])]
+
+    return {
+        "days": days,
+        "limit": limit,
+        "billable_events": report.get("billable_events", 0),
+        "issue_count": report.get("issue_count", 0),
+        "orphan_debit_count": report.get("orphan_debit_count", 0),
+        "issues": issues,
+        "orphan_debits": orphan_debits,
+    }
+
+
+@router.post("/reconciliation/credit-events/repair")
+async def repair_reconciliation_credit_events(
+    days: int = Query(default=30, ge=1, le=180),
+    limit: int = Query(default=200, ge=1, le=2000),
+    max_repairs: int = Query(default=200, ge=1, le=5000),
+    admin: dict = Depends(get_current_admin),
+):
+    db = await get_database()
+    _ = admin
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    result = await repair_credit_event_mismatches(
+        db,
+        since=since,
+        limit=limit,
+        max_repairs=max_repairs,
+    )
+    before = result.get("before") or {}
+    after = result.get("after") or {}
+    return {
+        "message": "Reconciliation repair run completed",
+        "days": days,
+        "limit": limit,
+        "max_repairs": max_repairs,
+        "repaired": result.get("repaired", 0),
+        "repaired_event_keys": result.get("repaired_event_keys", []),
+        "unresolved_missing_debits": result.get("unresolved_missing_debits", 0),
+        "unresolved_orphan_debits": result.get("unresolved_orphan_debits", 0),
+        "skipped_duplicate_debits": result.get("skipped_duplicate_debits", 0),
+        "before": {
+            "billable_events": before.get("billable_events", 0),
+            "issue_count": before.get("issue_count", 0),
+            "orphan_debit_count": before.get("orphan_debit_count", 0),
+        },
+        "after": {
+            "billable_events": after.get("billable_events", 0),
+            "issue_count": after.get("issue_count", 0),
+            "orphan_debit_count": after.get("orphan_debit_count", 0),
+        },
+    }
+
+
+@router.get("/reconciliation/credit-events/anomalies")
+async def get_credit_reconciliation_anomalies(
+    days: int = Query(default=30, ge=1, le=180),
+    limit: int = Query(default=500, ge=1, le=5000),
+    admin: dict = Depends(get_current_admin),
+):
+    db = await get_database()
+    _ = admin
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    counters = await build_credit_anomaly_counters(db, since=since, limit=limit)
+    return {
+        "days": days,
+        "limit": limit,
+        "anomalies": counters,
+    }
+
+
+@router.get("/reconciliation/credit-events/export")
+async def export_credit_reconciliation_issues(
+    days: int = Query(default=30, ge=1, le=180),
+    limit: int = Query(default=500, ge=1, le=5000),
+    format: str = Query(default="csv"),
+    admin: dict = Depends(get_current_admin),
+):
+    db = await get_database()
+    _ = admin
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    report = await build_credit_event_reconciliation_report(db, since=since, limit=limit)
+
+    rows: list[dict] = []
+    for issue in report.get("issues", []):
+        event = issue.get("event") or {}
+        ledger = issue.get("ledger")
+        if isinstance(ledger, list):
+            ledger_count = len(ledger)
+            ledger_credits = ",".join([str((entry or {}).get("credits_delta")) for entry in ledger])
+        elif isinstance(ledger, dict):
+            ledger_count = 1
+            ledger_credits = str(ledger.get("credits_delta"))
+        else:
+            ledger_count = 0
+            ledger_credits = ""
+
+        rows.append(
+            {
+                "row_type": "issue",
+                "issue_type": issue.get("type"),
+                "operator_profile_id": issue.get("operator_profile_id") or event.get("operator_profile_id"),
+                "event_idempotency_key": event.get("idempotency_key"),
+                "event_type": event.get("event_type"),
+                "event_credits_charged": event.get("credits_charged"),
+                "event_created_at": event.get("created_at"),
+                "ledger_count": ledger_count,
+                "ledger_credits_delta": ledger_credits,
+            }
+        )
+
+    for debit in report.get("orphan_debits", []):
+        rows.append(
+            {
+                "row_type": "orphan_debit",
+                "issue_type": "orphan_debit",
+                "operator_profile_id": debit.get("operator_profile_id"),
+                "event_idempotency_key": debit.get("billing_event_idempotency_key"),
+                "event_type": None,
+                "event_credits_charged": None,
+                "event_created_at": None,
+                "ledger_count": 1,
+                "ledger_credits_delta": debit.get("credits_delta"),
+            }
+        )
+
+    normalized_format = format.strip().lower()
+    if normalized_format == "json":
+        return JSONResponse(
+            {
+                "days": days,
+                "limit": limit,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "summary": {
+                    "issue_count": report.get("issue_count", 0),
+                    "orphan_debit_count": report.get("orphan_debit_count", 0),
+                },
+                "rows": rows,
+            }
+        )
+
+    output = io.StringIO()
+    fieldnames = [
+        "row_type",
+        "issue_type",
+        "operator_profile_id",
+        "event_idempotency_key",
+        "event_type",
+        "event_credits_charged",
+        "event_created_at",
+        "ledger_count",
+        "ledger_credits_delta",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+
+    return PlainTextResponse(output.getvalue(), media_type="text/csv")

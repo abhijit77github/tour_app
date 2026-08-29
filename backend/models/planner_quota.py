@@ -7,7 +7,7 @@ PlannerRewardType = Literal["ad", "promotion"]
 
 
 class PlannerTouristQuotaSettingsUpdate(BaseModel):
-    daily_limit: int = Field(default=3, ge=0, le=100)
+    daily_limit: int = Field(default=3, ge=0, le=400)
     monthly_limit: int = Field(default=10, ge=0, le=1000)
     ad_reward_daily_credits: int = Field(default=1, ge=0, le=20)
     ad_reward_monthly_credits: int = Field(default=1, ge=0, le=100)
@@ -18,6 +18,7 @@ class PlannerTouristQuotaSettingsUpdate(BaseModel):
 class PlannerRewardGrantRequest(BaseModel):
     reward_id: str
     reward_type: PlannerRewardType
+    metadata: dict = Field(default_factory=dict)
 
     @field_validator("reward_id", mode="before")
     @classmethod
@@ -44,31 +45,3 @@ class PlannerQuotaStatus(BaseModel):
     daily_resets_at: str
     monthly_resets_at: str
     last_request_at: Optional[str] = None
-from typing import Literal
-
-from pydantic import BaseModel, Field, field_validator
-
-
-PlannerRewardType = Literal["ad", "promotion"]
-
-
-class PlannerQuotaSettingsUpdate(BaseModel):
-    daily_limit: int = Field(default=3, ge=0, le=1000)
-    monthly_limit: int = Field(default=10, ge=0, le=10000)
-    ad_reward_daily_bonus: int = Field(default=1, ge=0, le=100)
-    ad_reward_monthly_bonus: int = Field(default=1, ge=0, le=1000)
-    promotion_reward_daily_bonus: int = Field(default=1, ge=0, le=100)
-    promotion_reward_monthly_bonus: int = Field(default=2, ge=0, le=1000)
-
-
-class PlannerRewardGrantRequest(BaseModel):
-    reward_id: str
-    reward_type: PlannerRewardType
-    metadata: dict = Field(default_factory=dict)
-
-    @field_validator("reward_id", mode="before")
-    @classmethod
-    def clean_reward_id(cls, value: str) -> str:
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError("reward_id is required")
-        return value.strip()

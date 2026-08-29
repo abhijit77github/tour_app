@@ -539,6 +539,74 @@
       </div>
 
       <div v-else class="tab-panel">
+        <section class="panel recon-panel">
+          <div class="panel-head with-meta">
+            <div>
+              <p class="panel-kicker">Billing reconciliation ops</p>
+              <h2>Anomaly monitor and export</h2>
+            </div>
+            <div class="panel-meta-row">
+              <span class="panel-meta">Window: {{ reconciliationWindowDays }} days</span>
+              <div class="pager">
+                <button class="pager-btn" type="button" @click="loadReconciliationOps" :disabled="reconciliationLoading">{{ reconciliationLoading ? 'Loading…' : 'Refresh' }}</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="metrics-grid recon-metrics-grid">
+            <article class="metric-card compact">
+              <span class="metric-label">Mismatch total</span>
+              <strong>{{ reconciliationAnomalies.mismatch_count || 0 }}</strong>
+              <p>Open issue + orphan-debit total</p>
+            </article>
+            <article class="metric-card compact">
+              <span class="metric-label">Compensation failures</span>
+              <strong>{{ reconciliationAnomalies.compensation_failure_count || 0 }}</strong>
+              <p>Orders stuck in failed compensation state</p>
+            </article>
+            <article class="metric-card compact">
+              <span class="metric-label">Duplicate attempts</span>
+              <strong>{{ reconciliationAnomalies.duplicate_attempt_count || 0 }}</strong>
+              <p>Repeated compensation calls detected</p>
+            </article>
+            <article class="metric-card compact">
+              <span class="metric-label">In progress</span>
+              <strong>{{ reconciliationAnomalies.compensation_processing_count || 0 }}</strong>
+              <p>Compensation currently processing</p>
+            </article>
+          </div>
+
+          <div class="recon-actions">
+            <button class="btn-primary" type="button" @click="runReconciliationRepair" :disabled="repairingReconciliation || reconciliationLoading">{{ repairingReconciliation ? 'Repairing…' : 'Run repair pass' }}</button>
+            <button class="btn-secondary" type="button" @click="exportReconciliation('csv')" :disabled="exportingReconciliation || reconciliationLoading">{{ exportingReconciliation ? 'Exporting…' : 'Export CSV' }}</button>
+            <button class="btn-secondary" type="button" @click="exportReconciliation('json')" :disabled="exportingReconciliation || reconciliationLoading">{{ exportingReconciliation ? 'Exporting…' : 'Export JSON' }}</button>
+          </div>
+
+          <div class="events-table-wrap compact-scroll recon-table-wrap">
+            <table class="events-table compact-table">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Operator</th>
+                  <th>Event key</th>
+                  <th>Credits</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in reconciliationIssuesPreview" :key="item.key">
+                  <td>{{ readableText(item.type) }}</td>
+                  <td>{{ item.operator_profile_id || 'N/A' }}</td>
+                  <td>{{ item.event_idempotency_key || 'N/A' }}</td>
+                  <td>{{ item.credits }}</td>
+                </tr>
+                <tr v-if="!reconciliationIssuesPreview.length">
+                  <td colspan="4" class="empty-inline">No unresolved reconciliation rows in current preview.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
         <div class="grid two-col second-row">
           <section class="panel">
             <div class="panel-head with-meta">
@@ -739,6 +807,19 @@ const pricingHistoryPage = ref(1)
 const quotaHistoryPage = ref(1)
 const quotaLedgerPage = ref(1)
 const rewardVerificationPage = ref(1)
+const reconciliationWindowDays = ref(30)
+const reconciliationAnomalies = ref({
+  duplicate_attempt_count: 0,
+  compensation_failure_count: 0,
+  compensation_processing_count: 0,
+  mismatch_count: 0,
+  mismatch_breakdown: {},
+  reconciliation_scan: {},
+})
+const reconciliationIssuesPreview = ref([])
+const reconciliationLoading = ref(false)
+const repairingReconciliation = ref(false)
+const exportingReconciliation = ref(false)
 
 const PAGE_SIZE = {
   plans: 3,
@@ -985,11 +1066,125 @@ const loadAll = async () => {
     buildPlanDrafts()
     buildPlannerPricingForm()
     buildPlannerQuotaForm()
+    await loadReconciliationOps()
   } catch (error) {
     console.error('Failed to load billing admin data:', error)
     loadError.value = error.response?.data?.detail || 'Failed to load billing controls'
   } finally {
     loading.value = false
+  }
+}
+
+const mapReconciliationPreviewRows = (issues, orphans) => {
+  const fromIssues = (issues || []).slice(0, 8).map((issue, index) => {
+    const event = issue?.event || {}
+    const ledger = issue?.ledger
+    let credits = '-'
+    if (Array.isArray(ledger)) {
+      credits = ledger.map(item => item?.credits_delta).join(', ')
+    } else if (ledger && typeof ledger === 'object') {
+      credits = `${ledger.credits_delta ?? '-'}`
+    } else if (event?.credits_charged != null) {
+      credits = `${event.credits_charged}`
+    }
+    return {
+      key: `issue-${index}-${event.idempotency_key || 'none'}`,
+      type: issue?.type || 'issue',
+      operator_profile_id: issue?.operator_profile_id || event?.operator_profile_id,
+      event_idempotency_key: event?.idempotency_key || '-',
+      credits,
+    }
+  })
+
+  const fromOrphans = (orphans || []).slice(0, 8).map((debit, index) => ({
+    key: `orphan-${index}-${debit?._id || 'none'}`,
+    type: 'orphan_debit',
+    operator_profile_id: debit?.operator_profile_id,
+    event_idempotency_key: debit?.billing_event_idempotency_key || '-',
+    credits: `${debit?.credits_delta ?? '-'}`,
+  }))
+
+  return [...fromIssues, ...fromOrphans].slice(0, 12)
+}
+
+const loadReconciliationOps = async () => {
+  reconciliationLoading.value = true
+  try {
+    const days = reconciliationWindowDays.value
+    const [anomalyRes, reportRes] = await Promise.all([
+      api.get('/admin/billing/reconciliation/credit-events/anomalies', {
+        headers: adminHeaders.value,
+        params: { days, limit: 500 },
+      }),
+      api.get('/admin/billing/reconciliation/credit-events', {
+        headers: adminHeaders.value,
+        params: { days, limit: 50 },
+      }),
+    ])
+
+    reconciliationAnomalies.value = anomalyRes.data?.anomalies || reconciliationAnomalies.value
+    reconciliationIssuesPreview.value = mapReconciliationPreviewRows(reportRes.data?.issues, reportRes.data?.orphan_debits)
+  } catch (error) {
+    console.error('Failed to load reconciliation ops:', error)
+    setMessage('error', error.response?.data?.detail || 'Failed to load reconciliation metrics')
+  } finally {
+    reconciliationLoading.value = false
+  }
+}
+
+const runReconciliationRepair = async () => {
+  repairingReconciliation.value = true
+  try {
+    const response = await api.post(
+      '/admin/billing/reconciliation/credit-events/repair',
+      null,
+      {
+        headers: adminHeaders.value,
+        params: { days: reconciliationWindowDays.value, limit: 500, max_repairs: 500 },
+      }
+    )
+    const repaired = Number(response.data?.repaired || 0)
+    setMessage('success', `Reconciliation repair completed. Repaired ${repaired} row${repaired === 1 ? '' : 's'}.`)
+    await loadReconciliationOps()
+  } catch (error) {
+    console.error('Failed to run reconciliation repair:', error)
+    setMessage('error', error.response?.data?.detail || 'Failed to run reconciliation repair')
+  } finally {
+    repairingReconciliation.value = false
+  }
+}
+
+const exportReconciliation = async (format) => {
+  exportingReconciliation.value = true
+  try {
+    const response = await api.get('/admin/billing/reconciliation/credit-events/export', {
+      headers: adminHeaders.value,
+      params: { days: reconciliationWindowDays.value, limit: 500, format },
+      responseType: format === 'json' ? 'json' : 'text',
+    })
+
+    const timestamp = new Date().toISOString().slice(0, 19).replaceAll(':', '-')
+    const fileName = `billing-reconciliation-${timestamp}.${format}`
+    let blob
+    if (format === 'json') {
+      blob = new Blob([JSON.stringify(response.data || {}, null, 2)], { type: 'application/json;charset=utf-8' })
+    } else {
+      blob = new Blob([response.data || ''], { type: 'text/csv;charset=utf-8' })
+    }
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+    setMessage('success', `Reconciliation export ready (${format.toUpperCase()}).`)
+  } catch (error) {
+    console.error('Failed to export reconciliation report:', error)
+    setMessage('error', error.response?.data?.detail || 'Failed to export reconciliation report')
+  } finally {
+    exportingReconciliation.value = false
   }
 }
 
@@ -1617,6 +1812,25 @@ onMounted(loadAll)
   gap: 0.5rem;
 }
 
+.recon-panel {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.recon-metrics-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.recon-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.recon-table-wrap {
+  max-height: 16rem;
+}
+
 .planner-pricing-strip {
   margin-top: 0.95rem;
 }
@@ -1887,6 +2101,10 @@ onMounted(loadAll)
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .recon-metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .tab-button {
     flex: 1 1 180px;
   }
@@ -1895,6 +2113,10 @@ onMounted(loadAll)
 @media (max-width: 1100px) {
   .planner-pricing-grid,
   .plan-edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .recon-metrics-grid {
     grid-template-columns: 1fr;
   }
 

@@ -224,6 +224,7 @@ class PlannerEventLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(fake_db.credit_ledger.docs), 1)
         self.assertEqual(fake_db.credit_ledger.docs[0]["credits_delta"], -2)
         event = fake_db.billing_event_log.docs[0]
+        self.assertEqual(fake_db.credit_ledger.docs[0]["billing_event_idempotency_key"], event["idempotency_key"])
         self.assertTrue(event["is_billable"])
         self.assertEqual(event["credits_charged"], 2)
         self.assertEqual(event["metadata"]["configured_credits"], 2)

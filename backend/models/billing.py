@@ -200,6 +200,18 @@ class CreditAdjustmentRequest(BaseModel):
         return value.strip()
 
 
+class RefundCreditCompensationRequest(BaseModel):
+    notes: Optional[str] = None
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def clean_optional_notes(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
 class PlannerPricingSettingsUpdate(BaseModel):
     search_profile_click: int = Field(default=1, ge=0, le=100)
     planner_intent_click: int = Field(default=0, ge=0, le=100)
@@ -223,6 +235,7 @@ class ProviderPlanInDB(BaseModel):
     activated_at: Optional[datetime] = None
     last_assignment_notes: Optional[str] = None
     last_assigned_by: Optional[str] = None
+    last_fulfilled_order_id: Optional[str] = None
 
 
 class CreditLedgerEntry(BaseModel):
