@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     # Audit events
     audit_login_alert_threshold: int = 3
     audit_login_alert_window_minutes: int = 15
+
+    # Authorization rollout controls
+    rbac_step_up_required: bool = False
+    rbac_step_up_max_age_minutes: int = 15
+    rbac_audit_decisions: bool = True
     
     class Config:
         env_file = ".env"

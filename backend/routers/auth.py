@@ -11,12 +11,19 @@ from ..models.user import (
     RegistrationOTPVerifyRequest, ResendActivationOTPRequest
 )
 from ..database import get_database
-from ..utils.auth import verify_password, get_password_hash, create_access_token, decode_access_token
-from ..utils.audit_events import record_login_security_event
+from ..utils.auth import verify_password, get_password_hash, create_access_token, decode_access_token, decode_access_token_payload
+from ..utils.audit_events import record_authorization_decision, record_login_security_event
 from ..utils.email import send_otp_email, send_password_reset_confirmation_email
 from ..utils.otp import generate_otp, validate_otp, MAX_OTP_ATTEMPTS, OTP_VALIDITY_MINUTES
 from ..config import settings
-from ..utils.authorization import ensure_operator_access_context, has_permission, required_permission_for_request
+from ..utils.authorization import (
+    ensure_operator_access_context,
+    ensure_operator_onboarding_access,
+    has_permission,
+    is_recent_auth_payload,
+    permission_requires_step_up,
+    required_permission_for_request,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -93,9 +100,30 @@ async def _authenticate_login_user(db, *, email: str, password: str, request: Re
     return user
 
 
+async def _build_user_token_claims(db, *, user: dict) -> dict:
+    claims = {
+        "sub": user["email"],
+        "principal_type": "user",
+        "user_type": user.get("user_type"),
+    }
+
+    membership = await db.organization_memberships.find_one(
+        {
+            "principal_type": "user",
+            "principal_id": str(user["_id"]),
+            "membership_status": "active",
+        }
+    )
+    if membership:
+        claims["organization_id"] = membership.get("organization_id")
+        claims["role_keys"] = membership.get("role_keys", [])
+    return claims
+
+
 async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)) -> dict:
     """Get current authenticated user"""
     email = decode_access_token(token)
+    payload = decode_access_token_payload(token)
     if email is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -119,7 +147,38 @@ async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)
             context = await ensure_operator_access_context(db, user=user)
             request.state.operator_access_context = context
             if permission and not has_permission(set(context["permissions"]), permission):
+                if settings.rbac_audit_decisions:
+                    await record_authorization_decision(
+                        db,
+                        principal_type="user",
+                        principal_id=str(user.get("_id")),
+                        principal_name=user.get("full_name") or user.get("email"),
+                        permission=permission,
+                        path=request.url.path,
+                        method=request.method,
+                        decision="denied",
+                        detail="Operator permission denied",
+                    )
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Operator does not have access to this section")
+
+            if settings.rbac_step_up_required and permission_requires_step_up(permission):
+                if not is_recent_auth_payload(payload, max_age_minutes=settings.rbac_step_up_max_age_minutes):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Re-authentication required for this sensitive action",
+                    )
+
+            if permission and settings.rbac_audit_decisions:
+                await record_authorization_decision(
+                    db,
+                    principal_type="user",
+                    principal_id=str(user.get("_id")),
+                    principal_name=user.get("full_name") or user.get("email"),
+                    permission=permission,
+                    path=request.url.path,
+                    method=request.method,
+                    decision="allowed",
+                )
         except HTTPException as exc:
             if request.url.path == "/operators/profile" and request.method == "POST" and exc.status_code == status.HTTP_404_NOT_FOUND:
                 return user
@@ -255,6 +314,9 @@ async def verify_registration_otp(request: RegistrationOTPVerifyRequest):
         }
     )
 
+    if user.get("user_type") == "operator":
+        await ensure_operator_onboarding_access(db, user=user)
+
     return {
         "message": "Account verified successfully. You can now log in.",
         "email": request.email,
@@ -312,9 +374,8 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
     
     # Create access token
     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
-    access_token = create_access_token(
-        data={"sub": user["email"]}, expires_delta=access_token_expires
-    )
+    token_claims = await _build_user_token_claims(db, user=user)
+    access_token = create_access_token(data=token_claims, expires_delta=access_token_expires)
     
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -332,9 +393,8 @@ async def login_json(user_login: UserLogin, request: Request):
     
     # Create access token
     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
-    access_token = create_access_token(
-        data={"sub": user["email"]}, expires_delta=access_token_expires
-    )
+    token_claims = await _build_user_token_claims(db, user=user)
+    access_token = create_access_token(data=token_claims, expires_delta=access_token_expires)
     
     return {"access_token": access_token, "token_type": "bearer"}
 

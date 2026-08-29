@@ -315,6 +315,41 @@ class AccessControlRouterTests(unittest.TestCase):
         self.assertIn('admin.reports.read', updated['permissions'])
         self.assertEqual(fake_db.admins.docs[0]['role'], 'moderator')
 
+    def test_operator_team_update_rejects_cross_org_membership(self):
+        organization_id = str(ObjectId())
+        different_org_id = str(ObjectId())
+        membership_id = ObjectId()
+        fake_db = FakeDB(
+            organization_memberships=[
+                {
+                    '_id': membership_id,
+                    'organization_id': different_org_id,
+                    'principal_type': 'user',
+                    'principal_id': str(ObjectId()),
+                    'membership_status': 'active',
+                    'role_keys': ['operator_sales'],
+                    'permission_overrides': {'allow': [], 'deny': []},
+                    'scope_constraints': {},
+                }
+            ]
+        )
+        operator_context = {
+            'principal': {'_id': 'owner-1', 'email': 'owner@op.local', 'full_name': 'Owner'},
+            'organization': {'_id': organization_id, 'name': 'Op Org', 'slug': 'op-org', 'organization_type': 'operator', 'status': 'active'},
+            'permissions': ['operator.team.manage'],
+            'role_templates': [],
+        }
+        client = build_test_client(db=fake_db, operator_context=operator_context)
+
+        with patched_database(fake_db):
+            update_response = client.patch(
+                f"/operators/team/{membership_id}",
+                json={'role_keys': ['operator_finance']},
+            )
+
+        self.assertEqual(update_response.status_code, 404)
+        self.assertIn('Team member not found', update_response.json()['detail'])
+
 
 if __name__ == '__main__':
     unittest.main()

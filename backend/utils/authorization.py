@@ -6,10 +6,20 @@ from typing import Any
 from bson import ObjectId
 from fastapi import HTTPException, status
 
+from .policy_registry import has_registry_rule_match, resolve_permission_from_registry
+
 
 OPERATOR_ORG_TYPE = "operator"
 ADMIN_ORG_TYPE = "internal_admin"
 MEMBERSHIP_ACTIVE = "active"
+RBAC_DENY_UNMAPPED_PERMISSION = "rbac.deny.unmapped"
+SENSITIVE_PERMISSIONS = {
+    "platform.super_admin",
+    "admin.backups.manage",
+    "admin.billing.manage",
+    "admin.settings.manage",
+    "admin.operators.manage",
+}
 
 
 SYSTEM_ROLE_TEMPLATES: dict[str, dict[str, Any]] = {
@@ -222,7 +232,28 @@ def _permission_set(role_keys: list[str], permission_overrides: dict[str, list[s
 def has_permission(permissions: set[str], permission: str | None) -> bool:
     if not permission:
         return True
+    if permission == RBAC_DENY_UNMAPPED_PERMISSION:
+        return False
     return "platform.super_admin" in permissions or permission in permissions
+
+
+def permission_requires_step_up(permission: str | None) -> bool:
+    return bool(permission and permission in SENSITIVE_PERMISSIONS)
+
+
+def is_recent_auth_payload(payload: dict | None, *, max_age_minutes: int) -> bool:
+    if not payload:
+        return False
+    issued_at = payload.get("iat")
+    if not issued_at:
+        return False
+    try:
+        issued_at_dt = datetime.fromtimestamp(int(issued_at), tz=timezone.utc)
+    except Exception:
+        return False
+    now = datetime.now(timezone.utc)
+    age_seconds = (now - issued_at_dt).total_seconds()
+    return age_seconds <= max(int(max_age_minutes), 1) * 60
 
 
 def list_role_templates(*, organization_type: str) -> list[dict[str, Any]]:
@@ -256,12 +287,90 @@ async def _ensure_unique_slug(db, *, base_slug: str) -> str:
     return slug
 
 
+async def ensure_operator_onboarding_access(db, *, user: dict) -> None:
+    """Eagerly provision operator org + owner membership after verification."""
+    if user.get("user_type") != "operator":
+        return
+
+    principal_id = str(user["_id"])
+    existing_membership = await db.organization_memberships.find_one(
+        {
+            "principal_type": "user",
+            "principal_id": principal_id,
+            "membership_status": MEMBERSHIP_ACTIVE,
+        }
+    )
+    if existing_membership:
+        return
+
+    organization = await db.organizations.find_one(
+        {
+            "organization_type": OPERATOR_ORG_TYPE,
+            "owner_user_id": principal_id,
+        }
+    )
+    if not organization:
+        email_prefix = str(user.get("email") or "operator").split("@", 1)[0]
+        org_name = str(user.get("full_name") or email_prefix or "Operator").strip()
+        base_slug = _slugify(org_name)
+        slug = await _ensure_unique_slug(db, base_slug=base_slug)
+        now = datetime.now(timezone.utc)
+        document = {
+            "name": org_name,
+            "slug": slug,
+            "organization_type": OPERATOR_ORG_TYPE,
+            "status": "active",
+            "operator_profile_id": None,
+            "owner_user_id": principal_id,
+            "settings": {},
+            "created_at": now,
+            "updated_at": now,
+        }
+        result = await db.organizations.insert_one(document)
+        organization = {**document, "_id": result.inserted_id}
+
+    await ensure_membership(
+        db,
+        organization_id=str(organization["_id"]),
+        principal_type="user",
+        principal_id=principal_id,
+        role_keys=["operator_owner"],
+    )
+
+
 async def ensure_operator_organization(db, *, profile: dict) -> dict:
     organization_id = profile.get("organization_id")
     if organization_id and ObjectId.is_valid(organization_id):
         existing = await db.organizations.find_one({"_id": ObjectId(organization_id)})
         if existing:
             return existing
+
+    owner_user_id = str(profile.get("user_id") or "").strip() or None
+    if owner_user_id:
+        preprovisioned = await db.organizations.find_one(
+            {
+                "organization_type": OPERATOR_ORG_TYPE,
+                "owner_user_id": owner_user_id,
+            }
+        )
+        if preprovisioned:
+            now = datetime.now(timezone.utc)
+            org_updates = {
+                "operator_profile_id": str(profile["_id"]),
+                "updated_at": now,
+            }
+            if profile.get("business_name"):
+                org_updates["name"] = profile["business_name"]
+            await db.organizations.update_one(
+                {"_id": preprovisioned["_id"]},
+                {"$set": org_updates},
+            )
+            await db.operator_profiles.update_one(
+                {"_id": profile["_id"]},
+                {"$set": {"organization_id": str(preprovisioned["_id"]), "updated_at": now}},
+            )
+            preprovisioned.update(org_updates)
+            return preprovisioned
 
     base_slug = _slugify(profile.get("business_name") or f"operator-{profile.get('_id')}")
     slug = await _ensure_unique_slug(db, base_slug=base_slug)
@@ -272,6 +381,7 @@ async def ensure_operator_organization(db, *, profile: dict) -> dict:
         "organization_type": OPERATOR_ORG_TYPE,
         "status": "active",
         "operator_profile_id": str(profile["_id"]),
+        "owner_user_id": owner_user_id,
         "settings": {},
         "created_at": now,
         "updated_at": now,
@@ -459,63 +569,32 @@ async def ensure_admin_access_context(db, *, admin: dict) -> dict:
     }
 
 
-def _admin_permission_for_path(path: str, method: str) -> str | None:
-    if path in {"/admin/login", "/admin/profile", "/admin/change-password", "/admin/access/context"}:
-        return None
-    if path.startswith("/admin/team") or path.startswith("/admin/access"):
-        return "admin.team.manage"
-    if path.startswith("/admin/backups"):
-        return "admin.backups.manage"
-    if path.startswith("/admin/tickets"):
-        return "admin.tickets.manage"
-    if path.startswith("/admin/notifications"):
-        return "admin.notifications.manage"
-    if path.startswith("/admin/billing") or path.startswith("/admin/financial"):
-        return "admin.billing.manage" if method != "GET" else "admin.billing.read"
-    if path.startswith("/admin/audit"):
-        return "admin.audit.read"
-    if path.startswith("/admin/reports"):
-        return "admin.reports.read" if method == "GET" else "admin.settings.manage"
-    if path.startswith("/admin/settings"):
-        return "admin.settings.manage" if method != "GET" else "admin.settings.manage"
-    if path.startswith("/admin/dashboard"):
-        return "admin.dashboard.read"
-    if path.startswith("/admin/tourists") or (path.startswith("/admin/users") and method == "GET"):
-        return "admin.tourists.read"
-    if path.startswith("/admin/operators") or path.startswith("/admin/promotions"):
-        return "admin.operators.manage" if method != "GET" else "admin.operators.read"
-    if path.startswith("/admin/users"):
-        return "admin.operators.manage"
-    if path.startswith("/admin/quotes"):
-        return "admin.quotes.read"
-    if path.startswith("/admin/register"):
-        return "platform.super_admin"
-    return None
-
-
-def _operator_permission_for_path(path: str, method: str) -> str | None:
-    if path == "/operators/access/context":
-        return None
-    if path.startswith("/operator/billing"):
-        return "operator.billing.manage" if method not in {"GET", "HEAD", "OPTIONS"} else "operator.billing.read"
-    if path.startswith("/operator/promotions"):
-        return "operator.promotions.manage" if method not in {"GET", "HEAD", "OPTIONS"} else "operator.promotions.read"
-    if path.startswith("/operators/team"):
-        return "operator.team.manage"
-    if path.startswith("/operator/tickets"):
-        return "operator.tickets.create" if method not in {"GET", "HEAD", "OPTIONS"} else "operator.tickets.read"
-    if path.startswith("/operators/profile"):
-        return "operator.profile.update" if method not in {"GET", "HEAD", "OPTIONS"} else "operator.profile.read"
-    if path.startswith("/itineraries/operator/templates"):
-        return "operator.itineraries.manage"
-    if path == "/quotes/inbox":
-        return "operator.quotes.read"
-    if path.endswith("/respond") and path.startswith("/quotes/"):
-        return "operator.quotes.respond"
-    return None
-
-
 def required_permission_for_request(*, principal_type: str, path: str, method: str) -> str | None:
-    if principal_type == "admin":
-        return _admin_permission_for_path(path, method)
-    return _operator_permission_for_path(path, method)
+    registry_permission = resolve_permission_from_registry(
+        principal_type=principal_type,
+        path=path,
+        method=method,
+    )
+    if registry_permission is not None:
+        return registry_permission
+
+    if has_registry_rule_match(principal_type=principal_type, path=path, method=method):
+        # Explicitly matched permissive routes return None (e.g. profile/access-context reads).
+        return registry_permission
+
+    if principal_type == "admin" and (path.startswith("/admin") or path.startswith("/tickets/admin")):
+        return RBAC_DENY_UNMAPPED_PERMISSION
+
+    if principal_type == "user":
+        if path.startswith("/operators") or path.startswith("/operator/"):
+            return RBAC_DENY_UNMAPPED_PERMISSION
+        if path.startswith("/itineraries/operator"):
+            return RBAC_DENY_UNMAPPED_PERMISSION
+        if path == "/quotes/inbox" or path.startswith("/quotes/inbox/"):
+            return RBAC_DENY_UNMAPPED_PERMISSION
+        if path.startswith("/quotes/") and path.endswith("/respond"):
+            return RBAC_DENY_UNMAPPED_PERMISSION
+        if path.startswith("/tickets/operator"):
+            return RBAC_DENY_UNMAPPED_PERMISSION
+
+    return None

@@ -5,6 +5,9 @@ services:
     image: mongo:7
     container_name: tour-app-mongo
     restart: unless-stopped
+    # Temporary local setting: suppress MongoDB container logs during testing.
+    logging:
+      driver: "none"
     ports:
       - "27017:27017"
     volumes:

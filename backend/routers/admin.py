@@ -20,8 +20,20 @@ from ..models.admin import AdminCreate, AdminLogin, AdminToken, Admin
 from ..models.promotion import LocationPromotionCreate, LocationPromotionUpdate
 from ..routers.auth import get_current_user
 from ..utils.auth import get_password_hash, verify_password as _verify_password
-from ..utils.audit_events import record_login_security_event, serialize_audit_event
-from ..utils.authorization import ensure_admin_access_context, has_permission, required_permission_for_request
+from ..utils.audit_events import (
+    build_authorization_decision_report,
+    record_authorization_decision,
+    record_login_security_event,
+    serialize_audit_event,
+)
+from ..utils.authorization import (
+    ensure_admin_access_context,
+    has_permission,
+    is_recent_auth_payload,
+    permission_requires_step_up,
+    required_permission_for_request,
+)
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -873,10 +885,19 @@ async def get_current_admin(request: Request, token: str = Depends(get_token_fro
     
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        principal_type = str(payload.get("principal_type") or "").casefold()
+        if principal_type and principal_type != "admin":
+            logger.warning("Token principal_type is not admin: %s", principal_type)
+            raise credentials_exception
+
         admin_id: str = payload.get("sub")
         
         if admin_id is None:
             logger.warning("Token missing 'sub' claim")
+            raise credentials_exception
+
+        if not ObjectId.is_valid(admin_id):
+            logger.warning("Token sub is not a valid admin id: %s", admin_id)
             raise credentials_exception
             
         # Check token expiration (redundant as jwt.decode validates, but explicit for clarity)
@@ -929,7 +950,39 @@ async def get_current_admin(request: Request, token: str = Depends(get_token_fro
         method=request.method,
     )
     if permission and not has_permission(set(context["permissions"]), permission):
+        if settings.rbac_audit_decisions:
+            await record_authorization_decision(
+                db,
+                principal_type="admin",
+                principal_id=admin["_id"],
+                principal_name=admin.get("full_name") or admin.get("email"),
+                permission=permission,
+                path=request.url.path,
+                method=request.method,
+                decision="denied",
+                detail="Admin permission denied",
+            )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin does not have access to this section")
+
+    if settings.rbac_step_up_required and permission_requires_step_up(permission):
+        max_age = settings.rbac_step_up_max_age_minutes
+        if not is_recent_auth_payload(payload, max_age_minutes=max_age):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Re-authentication required for this sensitive action",
+            )
+
+    if permission and settings.rbac_audit_decisions:
+        await record_authorization_decision(
+            db,
+            principal_type="admin",
+            principal_id=admin["_id"],
+            principal_name=admin.get("full_name") or admin.get("email"),
+            permission=permission,
+            path=request.url.path,
+            method=request.method,
+            decision="allowed",
+        )
     return admin
 
 
@@ -1111,8 +1164,18 @@ async def admin_login(credentials: AdminLogin, request: Request):
         threshold_enabled=False,
     )
     
+    access_context = await ensure_admin_access_context(db, admin=admin)
+
     # Create access token
-    access_token = create_access_token(data={"sub": str(admin["_id"])})
+    access_token = create_access_token(
+        data={
+            "sub": str(admin["_id"]),
+            "principal_type": "admin",
+            "admin_role": admin.get("role"),
+            "organization_id": access_context["organization"]["_id"],
+            "role_keys": access_context["membership"].get("role_keys", []),
+        }
+    )
     
     admin["_id"] = str(admin["_id"])
     
@@ -2740,6 +2803,30 @@ async def get_audit_summary(
         "topUsers": top_users,
         "securityScore": security_score,
     }
+
+
+@router.get("/audit/authorization-decisions")
+async def get_authorization_decision_report(
+    hours: int = 24,
+    limit: int = 200,
+    principal_type: str = "",
+    decision: str = "",
+    permission: str = "",
+    path_contains: str = "",
+    admin: dict = Depends(get_current_admin),
+):
+    """Get authorization decision observability metrics and recent events."""
+    db = await get_database()
+    _ = admin
+    return await build_authorization_decision_report(
+        db,
+        hours=hours,
+        limit=limit,
+        principal_type=principal_type,
+        decision=decision,
+        permission=permission,
+        path_contains=path_contains,
+    )
 
 
 # ============= REPORTS & ANALYTICS ENDPOINTS =============

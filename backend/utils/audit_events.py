@@ -185,6 +185,41 @@ async def record_login_security_event(
     )
 
 
+async def record_authorization_decision(
+    db,
+    *,
+    principal_type: str,
+    principal_id: str | None,
+    principal_name: str | None,
+    permission: str | None,
+    path: str,
+    method: str,
+    decision: str,
+    detail: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    severity = "warning" if decision == "denied" else "info"
+    await append_audit_event_safe(
+        db,
+        category="security",
+        title=f"Authorization {decision}",
+        severity=severity,
+        event_type="authorization_decision",
+        user_name=principal_name or f"{principal_type}:{principal_id or 'unknown'}",
+        location="API",
+        description=detail or f"Authorization {decision} for {method} {path}",
+        metadata={
+            "principal_type": principal_type,
+            "principal_id": principal_id,
+            "permission": permission,
+            "path": path,
+            "method": method,
+            "decision": decision,
+            **(metadata or {}),
+        },
+    )
+
+
 def serialize_audit_event(document: dict) -> dict:
     item = dict(document)
     item["_id"] = str(item["_id"])
@@ -192,3 +227,138 @@ def serialize_audit_event(document: dict) -> dict:
         if item.get(field):
             item[field] = item[field].isoformat()
     return item
+
+
+def _nested_value(document: dict, path: str):
+    current: Any = document
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _safe_iso(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat()
+    return None
+
+
+async def build_authorization_decision_report(
+    db,
+    *,
+    hours: int = 24,
+    limit: int = 200,
+    principal_type: str | None = None,
+    decision: str | None = None,
+    permission: str | None = None,
+    path_contains: str | None = None,
+) -> dict:
+    safe_hours = max(int(hours or 24), 1)
+    safe_limit = min(max(int(limit or 200), 1), 1000)
+    since = utcnow() - timedelta(hours=safe_hours)
+
+    base_filters: dict[str, Any] = {
+        "category": "security",
+        "event_type": "authorization_decision",
+        "timestamp": {"$gte": since},
+    }
+
+    normalized_principal_type = principal_type.strip().casefold() if principal_type else ""
+    normalized_decision = decision.strip().casefold() if decision else ""
+    normalized_permission = permission.strip() if permission else ""
+    normalized_path_contains = path_contains.strip().casefold() if path_contains else ""
+
+    if normalized_principal_type:
+        base_filters["metadata.principal_type"] = normalized_principal_type
+    if normalized_decision:
+        base_filters["metadata.decision"] = normalized_decision
+    if normalized_permission:
+        base_filters["metadata.permission"] = normalized_permission
+
+    all_docs = await db[AUDIT_EVENTS_COLLECTION].find(base_filters).sort("timestamp", -1).to_list(length=5000)
+    if normalized_path_contains:
+        all_docs = [
+            doc
+            for doc in all_docs
+            if normalized_path_contains in str(_nested_value(doc, "metadata.path") or "").casefold()
+        ]
+
+    allowed_count = sum(1 for doc in all_docs if str(_nested_value(doc, "metadata.decision") or "").casefold() == "allowed")
+    denied_count = sum(1 for doc in all_docs if str(_nested_value(doc, "metadata.decision") or "").casefold() == "denied")
+    total_count = len(all_docs)
+
+    permission_denials: dict[str, int] = {}
+    route_denials: dict[str, int] = {}
+    principal_activity: dict[str, dict[str, int]] = {}
+
+    for doc in all_docs:
+        decision_value = str(_nested_value(doc, "metadata.decision") or "").casefold()
+        permission_value = str(_nested_value(doc, "metadata.permission") or "none")
+        route_value = f"{_nested_value(doc, 'metadata.method') or ''} {_nested_value(doc, 'metadata.path') or ''}".strip()
+        principal_value = str(_nested_value(doc, "metadata.principal_type") or "unknown")
+
+        if principal_value not in principal_activity:
+            principal_activity[principal_value] = {"allowed": 0, "denied": 0, "total": 0}
+        principal_activity[principal_value]["total"] += 1
+        if decision_value == "denied":
+            principal_activity[principal_value]["denied"] += 1
+            permission_denials[permission_value] = permission_denials.get(permission_value, 0) + 1
+            route_denials[route_value] = route_denials.get(route_value, 0) + 1
+        else:
+            principal_activity[principal_value]["allowed"] += 1
+
+    def _top_rows(counter: dict[str, int], label: str) -> list[dict]:
+        return [
+            {label: key, "count": value}
+            for key, value in sorted(counter.items(), key=lambda item: item[1], reverse=True)[:10]
+        ]
+
+    recent_events = []
+    for doc in all_docs[:safe_limit]:
+        recent_events.append(
+            {
+                "timestamp": _safe_iso(doc.get("timestamp")),
+                "principal_type": _nested_value(doc, "metadata.principal_type"),
+                "principal_id": _nested_value(doc, "metadata.principal_id"),
+                "decision": _nested_value(doc, "metadata.decision"),
+                "permission": _nested_value(doc, "metadata.permission"),
+                "method": _nested_value(doc, "metadata.method"),
+                "path": _nested_value(doc, "metadata.path"),
+                "detail": doc.get("description"),
+            }
+        )
+
+    denial_rate = round((denied_count / total_count) * 100, 2) if total_count else 0.0
+    return {
+        "window": {
+            "hours": safe_hours,
+            "since": since.isoformat(),
+        },
+        "filters": {
+            "principal_type": normalized_principal_type or None,
+            "decision": normalized_decision or None,
+            "permission": normalized_permission or None,
+            "path_contains": normalized_path_contains or None,
+        },
+        "summary": {
+            "total": total_count,
+            "allowed": allowed_count,
+            "denied": denied_count,
+            "denialRate": denial_rate,
+        },
+        "topDeniedPermissions": _top_rows(permission_denials, "permission"),
+        "topDeniedRoutes": _top_rows(route_denials, "route"),
+        "principalBreakdown": [
+            {
+                "principal_type": key,
+                "allowed": values["allowed"],
+                "denied": values["denied"],
+                "total": values["total"],
+            }
+            for key, values in sorted(principal_activity.items(), key=lambda item: item[1]["total"], reverse=True)
+        ],
+        "events": recent_events,
+    }

@@ -41,3 +41,12 @@ def decode_access_token(token: str) -> Optional[str]:
         return email
     except JWTError:
         return None
+
+
+def decode_access_token_payload(token: str) -> Optional[dict]:
+    """Decode token payload for authorization context checks."""
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        return payload
+    except JWTError:
+        return None

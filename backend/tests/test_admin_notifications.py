@@ -22,6 +22,22 @@ class FakeCursor:
     def __init__(self, docs):
         self.docs = [deepcopy(doc) for doc in docs]
 
+    def sort(self, spec, direction=None):
+        if isinstance(spec, list):
+            fields = spec
+        else:
+            fields = [(spec, direction if direction is not None else 1)]
+
+        for field, dir_value in reversed(fields):
+            reverse = int(dir_value) == -1
+            self.docs.sort(key=lambda doc: doc.get(field), reverse=reverse)
+        return self
+
+    def limit(self, length):
+        if length is not None:
+            self.docs = self.docs[:length]
+        return self
+
     async def to_list(self, length=None):
         if length is None:
             return [deepcopy(doc) for doc in self.docs]
@@ -47,14 +63,29 @@ class FakeCollection:
     def __init__(self, docs=None):
         self.docs = [deepcopy(doc) for doc in (docs or [])]
 
+    @staticmethod
+    def _get_field(doc, dotted_key):
+        current = doc
+        for part in dotted_key.split("."):
+            if not isinstance(current, dict):
+                return None
+            current = current.get(part)
+        return current
+
     def _value_matches(self, current, expected):
         if isinstance(expected, dict):
             if "$lte" in expected and not (current is not None and current <= expected["$lte"]):
+                return False
+            if "$gte" in expected and not (current is not None and current >= expected["$gte"]):
                 return False
             if "$exists" in expected:
                 exists = current is not None
                 if exists != expected["$exists"]:
                     return False
+            if "$ne" in expected and current == expected["$ne"]:
+                return False
+            if "$in" in expected and current not in expected["$in"]:
+                return False
             return True
         return current == expected
 
@@ -64,9 +95,58 @@ class FakeCollection:
                 if not any(self._matches(doc, item) for item in value):
                     return False
                 continue
-            if not self._value_matches(doc.get(key), value):
+            if not self._value_matches(self._get_field(doc, key), value):
                 return False
         return True
+
+    def aggregate(self, pipeline):
+        docs = [deepcopy(doc) for doc in self.docs]
+        for stage in pipeline:
+            if "$match" in stage:
+                query = stage["$match"]
+                docs = [doc for doc in docs if self._matches(doc, query)]
+                continue
+
+            if "$addFields" in stage:
+                for doc in docs:
+                    if "_last_activity" in stage["$addFields"]:
+                        doc["_last_activity"] = (
+                            doc.get("last_login")
+                            or doc.get("updated_at")
+                            or doc.get("created_at")
+                        )
+                continue
+
+            if "$group" in stage:
+                spec = stage["$group"]
+                group_expr = spec.get("_id")
+                if group_expr == "$user_type":
+                    counts = {}
+                    for doc in docs:
+                        key = doc.get("user_type")
+                        counts[key] = counts.get(key, 0) + 1
+                    docs = [{"_id": key, "count": value} for key, value in counts.items()]
+                continue
+
+        return FakeCursor(docs)
+
+    async def count_documents(self, query):
+        return len([doc for doc in self.docs if self._matches(doc, query)])
+
+    async def distinct(self, field, query):
+        values = []
+        seen = set()
+        for doc in self.docs:
+            if not self._matches(doc, query):
+                continue
+            value = self._get_field(doc, field)
+            if value in (None, ""):
+                continue
+            if value in seen:
+                continue
+            seen.add(value)
+            values.append(value)
+        return values
 
     def find(self, query):
         if not query:
@@ -89,10 +169,20 @@ class FakeCollection:
         for index, doc in enumerate(self.docs):
             if self._matches(doc, query):
                 updated = deepcopy(doc)
+                for key, value in deepcopy(update.get("$inc", {})).items():
+                    updated[key] = updated.get(key, 0) + value
                 for key, value in deepcopy(update.get("$set", {})).items():
                     updated[key] = value
                 self.docs[index] = updated
                 return FakeUpdateResult(modified_count=1)
+        if upsert:
+            new_doc = deepcopy(query)
+            for key, value in deepcopy(update.get("$setOnInsert", {})).items():
+                new_doc[key] = value
+            for key, value in deepcopy(update.get("$set", {})).items():
+                new_doc[key] = value
+            await self.insert_one(new_doc)
+            return FakeUpdateResult(modified_count=1)
         return FakeUpdateResult(modified_count=0)
 
     async def update_many(self, query, update):
