@@ -70,3 +70,13 @@ htmlcov/
 
 # MongoDB local
 mongodb_data/
+
+# Terraform local artifacts
+.terraform/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+terraform/ec2/tfplan*
+terraform/ec2/terraform.tfvars
